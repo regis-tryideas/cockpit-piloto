@@ -1,0 +1,89 @@
+{% extends "dashboard.html" %}
+{% block panel %}
+{% if data.error %}
+  <div class="alert">{{ data.error }}</div>
+{% else %}
+<section class="panel">
+  <h3>iostat — atividade por device <small>(amostra de {{ data.interval }}s)</small></h3>
+  {% if data.all_devices and data.all_devices|length > 1 %}
+  <form method="get" class="device-filter">
+    <span class="filter-label">Devices:</span>
+    {% for dev in data.all_devices %}
+    <label class="chip">
+      <input type="checkbox" name="device" value="{{ dev }}"
+        {% if dev in data.selected_devices or not data.selected_devices %}checked{% endif %}>
+      <span>{{ dev }}</span>
+    </label>
+    {% endfor %}
+    <button type="submit">Aplicar</button>
+    <a class="link" href="{{ url_for('view_disk') }}">Todos</a>
+  </form>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Device</th>
+          <th>r/s</th><th>w/s</th>
+          <th>rkB/s</th><th>wkB/s</th>
+          <th>r_await (ms)</th><th>w_await (ms)</th>
+          <th>aqu-sz</th>
+          <th>%util</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in data.devices %}
+        <tr>
+          <td><strong>{{ d.device }}</strong></td>
+          <td>{{ "%.2f"|format(d.r_s) }}</td>
+          <td>{{ "%.2f"|format(d.w_s) }}</td>
+          <td>{{ "%.1f"|format(d.rkB_s) }}</td>
+          <td>{{ "%.1f"|format(d.wkB_s) }}</td>
+          <td>{{ "%.2f"|format(d.r_await) }}</td>
+          <td>{{ "%.2f"|format(d.w_await) }}</td>
+          <td>{{ "%.2f"|format(d.aqu_sz) }}</td>
+          <td>
+            <div class="bar"><span style="width: {{ [d.util,100]|min }}%"></span></div>
+            <span class="bar-value">{{ "%.1f"|format(d.util) }}%</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>df — uso por filesystem</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Filesystem</th><th>Tipo</th><th>Mount</th>
+          <th>Tamanho</th><th>Usado</th><th>Disponível</th><th>%uso</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fs in data.filesystems %}
+        <tr>
+          <td>{{ fs.filesystem }}</td>
+          <td>{{ fs.type }}</td>
+          <td>{{ fs.mount }}</td>
+          <td>{{ (fs.size_kb/1024/1024)|round(2) }} GiB</td>
+          <td>{{ (fs.used_kb/1024/1024)|round(2) }} GiB</td>
+          <td>{{ (fs.avail_kb/1024/1024)|round(2) }} GiB</td>
+          <td>
+            {% set pct = fs.use_pct.rstrip('%')|int %}
+            <div class="bar {% if pct >= 90 %}critical{% elif pct >= 75 %}warn{% endif %}">
+              <span style="width: {{ pct }}%"></span>
+            </div>
+            <span class="bar-value">{{ fs.use_pct }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

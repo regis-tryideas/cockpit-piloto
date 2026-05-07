@@ -1,0 +1,3 @@
+Flask>=3.0
+python-pam>=2.0
+six>=1.17

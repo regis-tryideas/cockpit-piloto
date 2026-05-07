@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Cockpit · {{ heading }}{% endblock %}
+{% block body %}
+<header class="topbar">
+  <div class="brand">Cockpit</div>
+  <nav class="tabs">
+    <a class="{% if tab=='dashboard' %}active{% endif %}" href="{{ url_for('view_dashboard') }}">Dashboard</a>
+    <a class="{% if tab=='disk' %}active{% endif %}" href="{{ url_for('view_disk') }}">Disco</a>
+    <a class="{% if tab=='logical-disk' %}active{% endif %}" href="{{ url_for('view_logical_disk') }}">Logical Disk</a>
+    <a class="{% if tab=='zfs' %}active{% endif %}" href="{{ url_for('view_zfs') }}">ZFS</a>
+    <a class="{% if tab=='cpu' %}active{% endif %}" href="{{ url_for('view_cpu') }}">CPU</a>
+    <a class="{% if tab=='memory' %}active{% endif %}" href="{{ url_for('view_memory') }}">Memória</a>
+    <a class="{% if tab=='network' %}active{% endif %}" href="{{ url_for('view_network') }}">Rede</a>
+  </nav>
+  <div class="user">
+    <span>{{ username }}</span>
+    <button id="autorefresh" type="button" data-on="0">Auto-refresh: off</button>
+    <a class="logout" href="{{ url_for('logout') }}">sair</a>
+  </div>
+</header>
+
+<main class="content">
+  <div class="content-header">
+    <h2>{{ heading }}</h2>
+    <button onclick="location.reload()" class="refresh">Atualizar agora</button>
+  </div>
+
+  {% block panel %}{% endblock %}
+</main>
+
+<script>
+(function(){
+  const btn = document.getElementById('autorefresh');
+  let timer = null;
+  const stored = parseInt(localStorage.getItem('cockpit.autorefresh') || '0', 10);
+  apply(stored);
+  btn.addEventListener('click', () => {
+    const cur = parseInt(btn.dataset.on, 10);
+    const next = cur === 0 ? 5 : cur === 5 ? 15 : 0;
+    apply(next);
+    localStorage.setItem('cockpit.autorefresh', String(next));
+  });
+  function apply(seconds){
+    btn.dataset.on = String(seconds);
+    btn.textContent = seconds === 0
+      ? 'Auto-refresh: off'
+      : `Auto-refresh: ${seconds}s`;
+    if (timer) { clearInterval(timer); timer = null; }
+    if (seconds > 0) {
+      timer = setInterval(() => location.reload(), seconds * 1000);
+    }
+  }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,185 @@
+{% extends "dashboard.html" %}
+{% block panel %}
+{% if data.error %}
+<section class="panel">
+  <h3>ZFS não está disponível neste host</h3>
+  <p class="hint-inline">{{ data.error }}</p>
+  <p class="hint-inline">
+    Para habilitar em Debian/Ubuntu: <code>apt install zfsutils-linux zfs-dkms</code>
+    e carregue o módulo com <code>modprobe zfs</code>.
+  </p>
+</section>
+{% else %}
+
+{# ---------- Pools ---------- #}
+<section class="panel">
+  <h3>zpool list <small>({{ data.pools|length }} pool(s))</small></h3>
+  {% if not data.pools %}
+    <p class="hint-inline">Nenhum pool ZFS importado.</p>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Pool</th><th>Saúde</th><th>Tamanho</th><th>Alocado</th>
+          <th>Livre</th><th>Frag</th><th>%Cap</th><th>Dedup</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in data.pools %}
+        {% set cap_pct = p.capacity.rstrip('%')|int if p.capacity else 0 %}
+        <tr>
+          <td><strong>{{ p.name }}</strong></td>
+          <td>
+            <span class="badge {% if p.health=='ONLINE' %}ok{% elif p.health=='DEGRADED' %}warn-bg{% else %}critical-bg{% endif %}">
+              {{ p.health }}
+            </span>
+          </td>
+          <td>{{ p.size_gib }} GiB</td>
+          <td>{{ p.alloc_gib }} GiB</td>
+          <td>{{ p.free_gib }} GiB</td>
+          <td>{{ p.fragmentation }}</td>
+          <td>
+            <div class="bar {% if cap_pct>=90 %}critical{% elif cap_pct>=80 %}warn{% endif %}">
+              <span style="width: {{ [cap_pct,100]|min }}%"></span>
+            </div>
+            <span class="bar-value">{{ p.capacity }}%</span>
+          </td>
+          <td>{{ p.dedup }}x</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- IO por pool ---------- #}
+{% if data.io %}
+<section class="panel">
+  <h3>zpool iostat <small>(amostra de {{ data.interval }}s)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Pool</th><th>Alocado</th><th>Livre</th>
+          <th>Read IOPS</th><th>Write IOPS</th>
+          <th>Read B/s</th><th>Write B/s</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in data.io %}
+        <tr>
+          <td><strong>{{ r.name }}</strong></td>
+          <td>{{ r.alloc_gib }} GiB</td>
+          <td>{{ r.free_gib }} GiB</td>
+          <td>{{ r.read_iops }}</td>
+          <td>{{ r.write_iops }}</td>
+          <td>{{ (r.read_bw/1024)|round(1) }} kB/s</td>
+          <td>{{ (r.write_bw/1024)|round(1) }} kB/s</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- ARC ---------- #}
+{% if data.arc %}
+<section class="panel summary-cards">
+  <div class="card">
+    <div class="card-label">ARC em uso</div>
+    <div class="card-value">{{ data.arc.size_gib }} GiB</div>
+    <div class="card-foot">
+      de {{ data.arc.c_max_gib }} GiB ({{ data.arc.fill_pct }}%)
+    </div>
+    <div class="bar {% if data.arc.fill_pct>=95 %}warn{% endif %} bar-wide">
+      <span style="width: {{ [data.arc.fill_pct,100]|min }}%"></span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">Hit ratio</div>
+    <div class="card-value">{{ data.arc.hit_ratio_pct }}%</div>
+    <div class="card-foot">
+      hits {{ data.arc.hits }} · misses {{ data.arc.misses }}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">L2ARC</div>
+    {% set l2_total = data.arc.l2_hits + data.arc.l2_misses %}
+    <div class="card-value">
+      {% if l2_total %}
+        {{ (100.0 * data.arc.l2_hits / l2_total)|round(2) }}%
+      {% else %}—{% endif %}
+    </div>
+    <div class="card-foot">
+      hits {{ data.arc.l2_hits }} · misses {{ data.arc.l2_misses }}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- Status detalhado ---------- #}
+{% for pool, st in data.statuses.items() %}
+{% if st.vdevs %}
+<section class="panel">
+  <h3>zpool status — {{ pool }}</h3>
+  {% if st.errors %}<p class="hint-inline"><strong>errors:</strong> {{ st.errors }}</p>{% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>NAME</th><th>STATE</th><th>READ</th><th>WRITE</th><th>CKSUM</th></tr>
+      </thead>
+      <tbody>
+        {% for v in st.vdevs %}
+        <tr>
+          <td style="padding-left: {{ 10 + v.indent*8 }}px"><span class="mono">{{ v.name }}</span></td>
+          <td>
+            <span class="badge {% if v.state=='ONLINE' %}ok{% elif v.state in ('DEGRADED','OFFLINE') %}warn-bg{% else %}critical-bg{% endif %}">
+              {{ v.state }}
+            </span>
+          </td>
+          <td class="{% if v.read != '0' %}warn-text{% endif %}">{{ v.read }}</td>
+          <td class="{% if v.write != '0' %}warn-text{% endif %}">{{ v.write }}</td>
+          <td class="{% if v.cksum != '0' %}warn-text{% endif %}">{{ v.cksum }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endfor %}
+
+{# ---------- Datasets ---------- #}
+{% if data.datasets %}
+<section class="panel">
+  <h3>Datasets <small>({{ data.datasets|length }})</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Nome</th><th>Used</th><th>Avail</th><th>Referenced</th>
+          <th>Mountpoint</th><th>Compress</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in data.datasets %}
+        <tr>
+          <td><strong>{{ d.name }}</strong></td>
+          <td>{{ d.used_gib }} GiB</td>
+          <td>{{ d.avail_gib }} GiB</td>
+          <td>{{ d.referenced_gib }} GiB</td>
+          <td class="mono">{{ d.mountpoint }}</td>
+          <td>{{ d.compressratio }}x</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% endif %}
+{% endblock %}

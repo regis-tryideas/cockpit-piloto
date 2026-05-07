@@ -1,0 +1,117 @@
+{% extends "dashboard.html" %}
+{% block panel %}
+{% if data.error %}
+  <div class="alert">{{ data.error }}</div>
+{% elif not data.devices %}
+<section class="panel">
+  <h3>Nenhum disco lógico/remoto detectado</h3>
+  <p class="hint-inline">
+    Esta tela mostra dispositivos vindos de transports remotos
+    (<code>iscsi</code>, <code>fc</code>, <code>fcoe</code>) — não há nenhum
+    conectado neste host no momento.
+    {% if not data.iscsi_available %}
+    O kernel também não expõe <code>/sys/class/iscsi_session</code>
+    (módulo <code>iscsi_tcp</code>/<code>open-iscsi</code> não carregado).
+    {% endif %}
+  </p>
+</section>
+{% else %}
+{% for d in data.devices %}
+<section class="panel ldisk-card">
+  <div class="ldisk-head">
+    <h3>
+      <span class="ldisk-name">{{ d.device }}</span>
+      <span class="badge transport">{{ d.transport }}</span>
+      {% if d.size %}<span class="badge">{{ d.size }}</span>{% endif %}
+    </h3>
+  </div>
+
+  <div class="ldisk-grid">
+    <div>
+      <div class="kv-label">Vendor</div>
+      <div class="kv-value">{{ d.vendor or '—' }}</div>
+    </div>
+    <div>
+      <div class="kv-label">Model</div>
+      <div class="kv-value">{{ d.model or '—' }}</div>
+    </div>
+    <div>
+      <div class="kv-label">WWN</div>
+      <div class="kv-value mono">{{ d.wwn or '—' }}</div>
+    </div>
+    <div>
+      <div class="kv-label">Serial</div>
+      <div class="kv-value mono">{{ d.serial or '—' }}</div>
+    </div>
+    {% if d.iscsi %}
+    <div class="span-2">
+      <div class="kv-label">iSCSI Target IQN</div>
+      <div class="kv-value mono">{{ d.iscsi.targetname or '—' }}</div>
+    </div>
+    <div>
+      <div class="kv-label">Portal</div>
+      <div class="kv-value mono">
+        {{ d.iscsi.persistent_address or '—' }}{% if d.iscsi.persistent_port %}:{{ d.iscsi.persistent_port }}{% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="kv-label">Sessão / Estado</div>
+      <div class="kv-value mono">
+        {{ d.iscsi.session }} · {{ d.iscsi.state or '—' }}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if d.io %}
+  <h4>I/O <small>(amostra de {{ data.interval }}s)</small></h4>
+  <table>
+    <thead>
+      <tr>
+        <th>r/s</th><th>w/s</th><th>rkB/s</th><th>wkB/s</th>
+        <th>r_await</th><th>w_await</th><th>aqu-sz</th><th>%util</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>{{ "%.2f"|format(d.io.r_s) }}</td>
+        <td>{{ "%.2f"|format(d.io.w_s) }}</td>
+        <td>{{ "%.1f"|format(d.io.rkB_s) }}</td>
+        <td>{{ "%.1f"|format(d.io.wkB_s) }}</td>
+        <td>{{ "%.2f"|format(d.io.r_await) }}</td>
+        <td>{{ "%.2f"|format(d.io.w_await) }}</td>
+        <td>{{ "%.2f"|format(d.io.aqu_sz) }}</td>
+        <td>
+          <div class="bar {% if d.io.util >= 90 %}critical{% elif d.io.util >= 70 %}warn{% endif %}">
+            <span style="width: {{ [d.io.util,100]|min }}%"></span>
+          </div>
+          <span class="bar-value">{{ "%.1f"|format(d.io.util) }}%</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if d.partitions %}
+  <h4>Partições / filesystems</h4>
+  <table>
+    <thead>
+      <tr><th>Nome</th><th>Tipo</th><th>Tamanho</th><th>FS</th><th>Mount</th></tr>
+    </thead>
+    <tbody>
+      {% for p in d.partitions %}
+      <tr>
+        <td><strong>{{ p.name }}</strong></td>
+        <td>{{ p.type }}</td>
+        <td>{{ p.size or '—' }}</td>
+        <td>{{ p.fstype or '—' }}</td>
+        <td>{{ p.mountpoint or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endfor %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "dashboard.html" %}
+{% block panel %}
+{% if data.error %}
+  <div class="alert">{{ data.error }}</div>
+{% else %}
+<section class="panel">
+  <h3>Tráfego por interface <small>(amostra de {{ data.interval }}s)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Interface</th>
+          <th>RX kB/s</th><th>TX kB/s</th>
+          <th>RX pkt/s</th><th>TX pkt/s</th>
+          <th>RX err/drop</th><th>TX err/drop</th>
+          <th>Total RX</th><th>Total TX</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for n in data.interfaces %}
+        <tr>
+          <td><strong>{{ n.iface }}</strong></td>
+          <td>{{ "%.2f"|format(n.rx_kbps) }}</td>
+          <td>{{ "%.2f"|format(n.tx_kbps) }}</td>
+          <td>{{ "%.0f"|format(n.rx_pps) }}</td>
+          <td>{{ "%.0f"|format(n.tx_pps) }}</td>
+          <td class="{% if n.rx_errors or n.rx_drop %}warn-text{% endif %}">
+            {{ n.rx_errors }} / {{ n.rx_drop }}
+          </td>
+          <td class="{% if n.tx_errors or n.tx_drop %}warn-text{% endif %}">
+            {{ n.tx_errors }} / {{ n.tx_drop }}
+          </td>
+          <td>{{ n.rx_total_mb }} MiB</td>
+          <td>{{ n.tx_total_mb }} MiB</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

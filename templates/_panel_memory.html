@@ -1,0 +1,66 @@
+{% extends "dashboard.html" %}
+{% block panel %}
+{% if data.error %}
+  <div class="alert">{{ data.error }}</div>
+{% else %}
+{% set ram = data.ram_kb %}
+{% set swap = data.swap_kb %}
+<section class="panel summary-cards">
+  <div class="card">
+    <div class="card-label">RAM em uso</div>
+    <div class="card-value">{{ data.ram_pct.used }}%</div>
+    <div class="card-foot">
+      {{ (ram.used/1024/1024)|round(2) }} / {{ (ram.total/1024/1024)|round(2) }} GiB
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">Disponível</div>
+    <div class="card-value">{{ (ram.available/1024/1024)|round(2) }} GiB</div>
+    <div class="card-foot">{{ data.ram_pct.available }}% livre</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Swap</div>
+    <div class="card-value">{{ data.swap_pct }}%</div>
+    <div class="card-foot">
+      {{ (swap.used/1024/1024)|round(2) }} / {{ (swap.total/1024/1024)|round(2) }} GiB
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>RAM — distribuição</h3>
+  <div class="stacked-bar">
+    {% set t = ram.total or 1 %}
+    {% set used_pct  = (ram.used - ram.buffers - ram.cached) * 100 / t %}
+    {% set buff_pct  = ram.buffers * 100 / t %}
+    {% set cache_pct = ram.cached * 100 / t %}
+    <span class="seg used"   style="width: {{ used_pct }}%"   title="Aplicações: {{ used_pct|round(1) }}%"></span>
+    <span class="seg buff"   style="width: {{ buff_pct }}%"   title="Buffers: {{ buff_pct|round(1) }}%"></span>
+    <span class="seg cache"  style="width: {{ cache_pct }}%"  title="Cache: {{ cache_pct|round(1) }}%"></span>
+  </div>
+  <ul class="legend">
+    <li><span class="dot used"></span> Aplicações</li>
+    <li><span class="dot buff"></span> Buffers ({{ data.ram_pct.buffers }}%)</li>
+    <li><span class="dot cache"></span> Cache ({{ data.ram_pct.cached }}%)</li>
+  </ul>
+</section>
+
+<section class="panel">
+  <h3>Detalhes</h3>
+  <table>
+    <tbody>
+      <tr><th>MemTotal</th><td>{{ ram.total }} kB</td></tr>
+      <tr><th>MemFree</th><td>{{ ram.free }} kB</td></tr>
+      <tr><th>MemAvailable</th><td>{{ ram.available }} kB</td></tr>
+      <tr><th>Buffers</th><td>{{ ram.buffers }} kB</td></tr>
+      <tr><th>Cached</th><td>{{ ram.cached }} kB</td></tr>
+      <tr><th>Dirty</th><td>{{ data.raw.Dirty }} kB</td></tr>
+      <tr><th>Writeback</th><td>{{ data.raw.Writeback }} kB</td></tr>
+      <tr><th>Slab</th><td>{{ data.raw.Slab }} kB</td></tr>
+      <tr><th>Mapped</th><td>{{ data.raw.Mapped }} kB</td></tr>
+      <tr><th>Shmem</th><td>{{ data.raw.Shmem }} kB</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}

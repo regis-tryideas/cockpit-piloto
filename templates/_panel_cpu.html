@@ -1,0 +1,60 @@
+{% extends "dashboard.html" %}
+{% block panel %}
+{% if data.error %}
+  <div class="alert">{{ data.error }}</div>
+{% else %}
+<section class="panel summary-cards">
+  <div class="card">
+    <div class="card-label">Uso total</div>
+    <div class="card-value">{{ "%.1f"|format(data.overall.busy) }}%</div>
+    <div class="card-foot">{{ data.cpu_count }} cores</div>
+  </div>
+  <div class="card">
+    <div class="card-label">iowait</div>
+    <div class="card-value">{{ "%.1f"|format(data.overall.iowait) }}%</div>
+  </div>
+  <div class="card">
+    <div class="card-label">load avg</div>
+    <div class="card-value small">
+      {{ "%.2f"|format(data.loadavg["1m"]) }} ·
+      {{ "%.2f"|format(data.loadavg["5m"]) }} ·
+      {{ "%.2f"|format(data.loadavg["15m"]) }}
+    </div>
+    <div class="card-foot">1m / 5m / 15m</div>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>mpstat — uso por core <small>(amostra de {{ data.interval }}s)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>CPU</th><th>%usr</th><th>%sys</th><th>%iowait</th>
+          <th>%irq+soft</th><th>%steal</th><th>%idle</th><th>%uso</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in data.per_cpu %}
+        <tr>
+          <td><strong>cpu{{ c.cpu }}</strong></td>
+          <td>{{ "%.2f"|format(c.usr) }}</td>
+          <td>{{ "%.2f"|format(c.sys) }}</td>
+          <td>{{ "%.2f"|format(c.iowait) }}</td>
+          <td>{{ "%.2f"|format(c.irq) }}</td>
+          <td>{{ "%.2f"|format(c.steal) }}</td>
+          <td>{{ "%.2f"|format(c.idle) }}</td>
+          <td>
+            <div class="bar {% if c.busy >= 90 %}critical{% elif c.busy >= 70 %}warn{% endif %}">
+              <span style="width: {{ [c.busy,100]|min }}%"></span>
+            </div>
+            <span class="bar-value">{{ "%.1f"|format(c.busy) }}%</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

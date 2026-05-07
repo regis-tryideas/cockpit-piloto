@@ -1,0 +1,33 @@
+# Python venv (esta pasta é um venv, então o ambiente fica fora do git)
+bin/
+lib/
+lib64
+include/
+pyvenv.cfg
+
+# Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLite — contém sessões ativas e log de tentativas de login
+cockpit.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Segredos
+.env
+.env.*
