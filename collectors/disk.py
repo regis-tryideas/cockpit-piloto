@@ -3,6 +3,18 @@ import subprocess
 
 from . import logical_disk
 
+PHYSICAL_PREFIXES = ("nvme", "sd", "vd", "hd", "xvd")
+LOGICAL_PREFIXES = ("md", "dm-")
+
+
+def _classify(name: str) -> str:
+    """Retorna 'physical', 'logical' ou 'other'."""
+    if name.startswith(PHYSICAL_PREFIXES):
+        return "physical"
+    if name.startswith(LOGICAL_PREFIXES):
+        return "logical"
+    return "other"
+
 
 def list_devices() -> list[str]:
     """Lista devices de bloco (tirando partições e loopbacks)."""
@@ -56,15 +68,19 @@ def collect(interval: int = 1, devices: list[str] | None = None) -> dict:
 
     remote = logical_disk.remote_block_devices()
     selected = set(devices) if devices else None
-    rows = []
+    physical_rows = []
+    logical_rows = []
+    other_rows = []
     for d in disks:
         name = d.get("disk_device")
         if name in remote:
             continue
         if selected is not None and name not in selected:
             continue
-        rows.append({
-            "device": d.get("disk_device", "?"),
+        family = _classify(name)
+        row = {
+            "device": name or "?",
+            "family": family,
             "r_s": d.get("r/s", 0.0),
             "w_s": d.get("w/s", 0.0),
             "rkB_s": d.get("rkB/s", 0.0),
@@ -73,9 +89,18 @@ def collect(interval: int = 1, devices: list[str] | None = None) -> dict:
             "w_await": d.get("w_await", 0.0),
             "aqu_sz": d.get("aqu-sz", 0.0),
             "util": d.get("util", 0.0),
-        })
+        }
+        if family == "physical":
+            physical_rows.append(row)
+        elif family == "logical":
+            logical_rows.append(row)
+        else:
+            other_rows.append(row)
 
-    rows.sort(key=lambda r: r["util"], reverse=True)
+    rows = physical_rows + logical_rows + other_rows
+    physical_rows.sort(key=lambda r: r["util"], reverse=True)
+    logical_rows.sort(key=lambda r: r["util"], reverse=True)
+    other_rows.sort(key=lambda r: r["util"], reverse=True)
 
     usage = []
     remote_paths = {f"/dev/{d}" for d in remote}
@@ -108,6 +133,9 @@ def collect(interval: int = 1, devices: list[str] | None = None) -> dict:
         "hostname": host.get("nodename", ""),
         "interval": interval,
         "devices": rows,
+        "physical_devices": physical_rows,
+        "logical_devices": logical_rows,
+        "other_devices": other_rows,
         "filesystems": usage,
         "all_devices": all_devices,
         "selected_devices": sorted(selected) if selected else [],

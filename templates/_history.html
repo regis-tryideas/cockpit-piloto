@@ -115,16 +115,23 @@
         });
       }
 
+      // Janela ativa (mantida para o auto-refresh)
+      let currentWindow = "6h";
+
       // Bind window picker
       const picker = document.querySelector(`.window-picker[data-target="${id}"]`);
       picker.addEventListener("click", e => {
         if (e.target.tagName !== "BUTTON") return;
         picker.querySelectorAll("button").forEach(b => b.classList.remove("active"));
         e.target.classList.add("active");
-        load(e.target.dataset.window);
+        currentWindow = e.target.dataset.window;
+        load(currentWindow);
       });
 
-      load("6h");
+      // Soft refresh recarrega os dados do gráfico mantendo a janela atual
+      canvas.addEventListener("cockpit:refresh", () => load(currentWindow));
+
+      load(currentWindow);
     })();
   </script>
 </section>

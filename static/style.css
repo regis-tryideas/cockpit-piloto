@@ -136,6 +136,25 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .refresh:hover { background: #30363d; }
 .topbar .logout { color: #f85149; }
 
+/* Soft refresh — indicador sutil */
+body.refreshing .topbar {
+  position: sticky;
+  top: 0;
+}
+body.refreshing .topbar::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #58a6ff 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: refresh-bar 1s linear infinite;
+}
+@keyframes refresh-bar {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
 /* Content */
 .content { padding: 20px; max-width: 1400px; margin: 0 auto; }
 .content-header {

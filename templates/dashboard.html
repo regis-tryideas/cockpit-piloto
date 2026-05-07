@@ -24,13 +24,57 @@
 <main class="content">
   <div class="content-header">
     <h2>{{ heading }}</h2>
-    <button onclick="location.reload()" class="refresh">Atualizar agora</button>
+    <button class="refresh" type="button">Atualizar agora</button>
   </div>
 
   {% block panel %}{% endblock %}
 </main>
 
 <script>
+// Soft refresh: busca o HTML da própria URL e substitui apenas os
+// painéis estáticos (sem canvas/gráfico). Painéis com gráfico recebem
+// um evento 'cockpit:refresh' para recarregarem seus dados via /api.
+window.cockpitSoftRefresh = async function(){
+  document.body.classList.add('refreshing');
+  try {
+    const r = await fetch(location.href, {
+      credentials: "same-origin",
+      headers: { "X-Cockpit-Refresh": "1" },
+    });
+    if (!r.ok) return;
+    const text = await r.text();
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    const oldMain = document.querySelector("main.content");
+    const newMain = doc.querySelector("main.content");
+    if (!oldMain || !newMain) return;
+
+    const oldPanels = oldMain.querySelectorAll("section.panel, section.summary-cards");
+    const newPanels = newMain.querySelectorAll("section.panel, section.summary-cards");
+    oldPanels.forEach((oldPanel, i) => {
+      const newPanel = newPanels[i];
+      if (!newPanel) return;
+      // Pula painéis que contêm canvas (gráfico) — eles têm refresh próprio.
+      if (oldPanel.querySelector("canvas")) return;
+      // Preserva estado de <details open>
+      const openSet = new Set();
+      oldPanel.querySelectorAll("details").forEach((d, idx) => {
+        if (d.open) openSet.add(idx);
+      });
+      oldPanel.innerHTML = newPanel.innerHTML;
+      oldPanel.querySelectorAll("details").forEach((d, idx) => {
+        if (openSet.has(idx)) d.open = true;
+      });
+    });
+
+    // Sinaliza para os charts recarregarem
+    document.querySelectorAll(".chart-wrap canvas").forEach(c => {
+      c.dispatchEvent(new Event("cockpit:refresh"));
+    });
+  } finally {
+    document.body.classList.remove('refreshing');
+  }
+};
+
 (function(){
   const btn = document.getElementById('autorefresh');
   let timer = null;
@@ -38,7 +82,7 @@
   apply(stored);
   btn.addEventListener('click', () => {
     const cur = parseInt(btn.dataset.on, 10);
-    const next = cur === 0 ? 5 : cur === 5 ? 15 : 0;
+    const next = cur === 0 ? 5 : cur === 5 ? 15 : cur === 15 ? 30 : 0;
     apply(next);
     localStorage.setItem('cockpit.autorefresh', String(next));
   });
@@ -49,9 +93,17 @@
       : `Auto-refresh: ${seconds}s`;
     if (timer) { clearInterval(timer); timer = null; }
     if (seconds > 0) {
-      timer = setInterval(() => location.reload(), seconds * 1000);
+      timer = setInterval(() => window.cockpitSoftRefresh(), seconds * 1000);
     }
   }
+
+  // Botão "Atualizar agora" também usa soft refresh
+  document.querySelectorAll('button.refresh').forEach(b => {
+    b.addEventListener('click', e => {
+      e.preventDefault();
+      window.cockpitSoftRefresh();
+    });
+  });
 })();
 </script>
 {% endblock %}
