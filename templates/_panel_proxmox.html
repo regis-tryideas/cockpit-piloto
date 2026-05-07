@@ -1,0 +1,202 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import history_block, explainer %}
+{% block panel %}
+{% if data.error %}
+<section class="panel">
+  <h3>Proxmox VE não detectado neste host</h3>
+  <p class="hint-inline">{{ data.error }}</p>
+  <p class="hint-inline">
+    Esta aba aparece automaticamente quando o cockpit detecta um node PVE
+    (existência de <code>/etc/pve</code> e do comando <code>pvesh</code>).
+  </p>
+</section>
+{% else %}
+
+{# ---------- Impacto agregado no host ---------- #}
+<section class="summary-cards">
+  <div class="card">
+    <div class="card-label">VMs / containers</div>
+    <div class="card-value">{{ data.impact.running_count }} <small>/ {{ data.impact.total_count }}</small></div>
+    <div class="card-foot">rodando / total</div>
+  </div>
+  <div class="card">
+    <div class="card-label">CPU alocada</div>
+    <div class="card-value">{{ data.impact.cpu_used_cores }} <small>cores</small></div>
+    <div class="card-foot">de {{ data.impact.cpu_alloc_cores }} vCPUs distribuídas</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Memória alocada</div>
+    <div class="card-value">{{ (data.impact.mem_used_b/1024/1024/1024)|round(2) }} <small>GiB</small></div>
+    <div class="card-foot">
+      de {{ (data.impact.mem_alloc_b/1024/1024/1024)|round(2) }} GiB reservados
+    </div>
+  </div>
+  {% if data.available.version %}
+  <div class="card">
+    <div class="card-label">Node</div>
+    <div class="card-value small">{{ data.available.node }}</div>
+    <div class="card-foot mono">{{ data.available.version }}</div>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- Top consumidores ---------- #}
+{% set top_running = data.vms|selectattr('status','equalto','running')|list %}
+{% if top_running %}
+<section class="panel">
+  <h3>VMs e containers <small>(ordenados por CPU%, snapshot atual)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>VMID</th><th>Nome</th><th>Tipo</th><th>Status</th>
+          <th>CPU%</th><th>vCPUs</th>
+          <th>RAM uso</th><th>RAM%</th>
+          <th>Disk read</th><th>Disk write</th>
+          <th>Net in</th><th>Net out</th>
+          <th>Uptime</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in data.vms %}
+        <tr class="{% if v.status != 'running' %}vm-stopped{% endif %}">
+          <td><strong>{{ v.vmid }}</strong></td>
+          <td><a href="{{ url_for('view_proxmox') }}#vm-{{ v.vmid }}">{{ v.name }}</a></td>
+          <td><span class="badge {{ 'transport' if v.type=='qemu' else '' }}">{{ v.type }}</span></td>
+          <td>
+            <span class="badge {{ 'ok' if v.status=='running' else 'warn-bg' }}">
+              {{ v.status }}
+            </span>
+          </td>
+          <td>
+            <div class="bar {% if v.cpu_pct >= 90 %}critical{% elif v.cpu_pct >= 70 %}warn{% endif %}">
+              <span style="width: {{ [v.cpu_pct,100]|min }}%"></span>
+            </div>
+            <span class="bar-value">{{ "%.1f"|format(v.cpu_pct) }}%</span>
+          </td>
+          <td>{{ v.cpu_cores }}</td>
+          <td>{{ (v.mem_used_b/1024/1024/1024)|round(2) }} / {{ (v.mem_max_b/1024/1024/1024)|round(2) }} GiB</td>
+          <td>
+            <div class="bar {% if v.mem_pct >= 90 %}critical{% elif v.mem_pct >= 75 %}warn{% endif %}">
+              <span style="width: {{ [v.mem_pct,100]|min }}%"></span>
+            </div>
+            <span class="bar-value">{{ "%.1f"|format(v.mem_pct) }}%</span>
+          </td>
+          <td>{{ (v.diskread_b/1024/1024/1024)|round(2) }} GiB</td>
+          <td>{{ (v.diskwrite_b/1024/1024/1024)|round(2) }} GiB</td>
+          <td>{{ (v.netin_b/1024/1024/1024)|round(2) }} GiB</td>
+          <td>{{ (v.netout_b/1024/1024/1024)|round(2) }} GiB</td>
+          <td>{{ (v.uptime_s/86400)|round(1) }} d</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- Históricos ---------- #}
+{{ history_block(
+  'pve-cpu-chart',
+  'CPU% por VM',
+  'pve_vm',
+  '[{"label":"cpu","key":"cpu_pct","groupBy":"name"}]',
+  y_label='%'
+) }}
+
+{{ history_block(
+  'pve-mem-chart',
+  'Memória usada por VM (bytes)',
+  'pve_vm',
+  '[{"label":"mem","key":"mem_used_b","groupBy":"name"}]',
+  y_label='bytes'
+) }}
+
+{# ---------- Discos VM → ZFS ---------- #}
+{% if data.zfs_groups %}
+<section class="panel">
+  <h3>Mapeamento VM → ZFS dataset</h3>
+  <p class="hint-inline">
+    Cada VM/container que usa um storage do tipo <code>zfspool</code> aparece aqui
+    associado ao seu dataset físico. Útil para identificar qual VM ocupa qual
+    espaço no pool e qual está gerando IO no backend ZFS.
+  </p>
+  {% for pool, items in data.zfs_groups.items() %}
+  <h4>Pool <span class="mono">{{ pool }}</span></h4>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>VMID</th><th>Nome</th><th>Slot</th>
+          <th>Dataset</th>
+          <th>Configurado</th><th>Usado real</th><th>Compress</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+        <tr>
+          <td><strong>{{ it.vmid }}</strong></td>
+          <td>{{ it.name }}</td>
+          <td><span class="mono">{{ it.slot }}</span></td>
+          <td><span class="mono">{{ it.dataset }}</span></td>
+          <td>{{ it.size or '—' }}</td>
+          <td>{% if it.used_b %}{{ (it.used_b/1024/1024/1024)|round(2) }} GiB{% else %}—{% endif %}</td>
+          <td>{{ it.compressratio or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{# ---------- Detalhes por VM (discos) ---------- #}
+<section class="panel">
+  <h3>Discos por VM</h3>
+  {% for v in data.vms %}
+  {% if v.disks %}
+  <h4 id="vm-{{ v.vmid }}">
+    <span class="mono">{{ v.vmid }}</span> · {{ v.name }}
+    <span class="badge {{ 'transport' if v.type=='qemu' else '' }}">{{ v.type }}</span>
+  </h4>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Slot</th><th>Storage</th><th>Tipo</th>
+          <th>Volume</th><th>Tamanho</th>
+          <th>Dataset / Path</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in v.disks %}
+        <tr>
+          <td><span class="mono">{{ d.slot }}</span></td>
+          <td>{{ d.storage }}</td>
+          <td><span class="badge">{{ d.storage_type or '—' }}</span></td>
+          <td><span class="mono">{{ d.volume }}</span></td>
+          <td>{{ d.size or '—' }}</td>
+          <td><span class="mono">{{ d.zfs_dataset or d.host_path or '—' }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endfor %}
+</section>
+
+{{ explainer('Como ler estas métricas', [
+  ('CPU%',         'Percentual médio (entre amostras do PVE) consumido pela VM. Multiplicado por <em>vCPUs</em> resulta em "cores efetivos" — comparar com cores físicos do host indica overcommit real.'),
+  ('vCPUs',        'Quantos cores virtuais foram alocados à VM. PVE não dedica cores; eles são compartilhados pelo scheduler do kernel host.'),
+  ('RAM uso',      'Memória <em>realmente usada</em> pela VM (não apenas reservada). Em QEMU vem do balloon driver; em LXC vem do cgroup memory.'),
+  ('RAM%',         'Memória usada vs configurada. >85% sustentado em VMs Linux geralmente é OK (cache); >85% sustentado em Windows é mais preocupante.'),
+  ('Disk read/write', 'Bytes lidos/escritos pela VM <em>desde o último start</em>. Reset ao desligar.'),
+  ('Net in/out',   'Tráfego acumulado da VM. Útil para detectar VMs barulhentas que justificam VLAN/QoS dedicado.'),
+  ('Uptime',       'Tempo desde o último boot da VM, em dias.'),
+  ('Mapeamento ZFS', 'Quando o storage é <code>zfspool</code>, cada disco da VM corresponde a um <em>zvol</em> no dataset <code>&lt;pool&gt;/&lt;volume&gt;</code>. O "Usado real" vem de <code>zfs list</code> e considera compressão; pode ser bem menor que o tamanho configurado.'),
+  ('Impacto no host','A soma de CPU% × vCPUs e a soma de RAM usada das VMs em execução comparadas aos cores e RAM totais do host (vistos nas abas CPU e Memória) indicam o quanto o host está pressionado pelas VMs. PSI no Dashboard ajuda a confirmar se há contenção real.'),
+]) }}
+{% endif %}
+{% endblock %}

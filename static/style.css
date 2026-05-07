@@ -406,6 +406,7 @@ tbody tr:hover { background: #1c2128; }
   font-size: 13px;
   color: #c9d1d9;
 }
+tr.vm-stopped { opacity: 0.5; }
 
 /* History block */
 .hist-header {

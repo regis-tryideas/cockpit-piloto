@@ -103,6 +103,19 @@ def init():
                 mfu_size_b INTEGER, mru_size_b INTEGER,
                 l2_hit_ratio REAL
             );
+
+            CREATE TABLE IF NOT EXISTS metrics_pve_vm (
+                ts INTEGER NOT NULL,
+                vmid INTEGER NOT NULL,
+                type TEXT, name TEXT, status TEXT,
+                cpu_pct REAL, cpu_cores INTEGER,
+                mem_used_b INTEGER, mem_max_b INTEGER,
+                diskread_b INTEGER, diskwrite_b INTEGER,
+                netin_b INTEGER, netout_b INTEGER,
+                PRIMARY KEY (ts, vmid)
+            );
+            CREATE INDEX IF NOT EXISTS idx_pve_vm_ts ON metrics_pve_vm(ts);
+            CREATE INDEX IF NOT EXISTS idx_pve_vm_vmid ON metrics_pve_vm(vmid);
             """
         )
 
@@ -169,6 +182,7 @@ def recent_failed_attempts(remote_addr: str, window_seconds: int = 300) -> int:
 HISTORY_TABLES = (
     "metrics_cpu", "metrics_mem", "metrics_disk", "metrics_net",
     "metrics_psi", "metrics_zfs_pool", "metrics_zfs_arc",
+    "metrics_pve_vm",
 )
 
 

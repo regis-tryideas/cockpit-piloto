@@ -10,6 +10,9 @@
     <a class="{% if tab=='disk' %}active{% endif %}" href="{{ url_for('view_disk') }}">Disco</a>
     <a class="{% if tab=='logical-disk' %}active{% endif %}" href="{{ url_for('view_logical_disk') }}">Logical Disk</a>
     <a class="{% if tab=='zfs' %}active{% endif %}" href="{{ url_for('view_zfs') }}">ZFS</a>
+    {% if pve_detected %}
+    <a class="{% if tab=='proxmox' %}active{% endif %}" href="{{ url_for('view_proxmox') }}">Proxmox</a>
+    {% endif %}
     <a class="{% if tab=='cpu' %}active{% endif %}" href="{{ url_for('view_cpu') }}">CPU</a>
     <a class="{% if tab=='memory' %}active{% endif %}" href="{{ url_for('view_memory') }}">Memória</a>
     <a class="{% if tab=='network' %}active{% endif %}" href="{{ url_for('view_network') }}">Rede</a>

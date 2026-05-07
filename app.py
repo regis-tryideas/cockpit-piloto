@@ -15,6 +15,7 @@ from collectors import logical_disk as ldisk_col
 from collectors import memory as mem_col
 from collectors import network as net_col
 from collectors import pressure as psi_col
+from collectors import proxmox as pve_col
 from collectors import zfs as zfs_col
 import db
 
@@ -28,11 +29,19 @@ app.config["SECRET_KEY"] = os.environ.get(
 )
 
 
+PVE_DETECTED = pve_col.detect()["ok"]
+
+
 @app.before_request
 def load_session():
     token = request.cookies.get(SESSION_COOKIE)
     g.session = db.get_session(token)
     g.session_token = token
+
+
+@app.context_processor
+def inject_globals():
+    return {"pve_detected": PVE_DETECTED}
 
 
 def login_required(view):
@@ -152,6 +161,19 @@ def view_logical_disk():
     )
 
 
+@app.get("/proxmox")
+@login_required
+def view_proxmox():
+    data = pve_col.collect()
+    return render_template(
+        "_panel_proxmox.html",
+        tab="proxmox",
+        heading="Proxmox VE",
+        username=g.session["username"],
+        data=data,
+    )
+
+
 @app.get("/zfs")
 @login_required
 def view_zfs():
@@ -224,6 +246,7 @@ VALID_HISTORY_RESOURCES = {
     "psi": "metrics_psi",
     "zfs_pool": "metrics_zfs_pool",
     "zfs_arc": "metrics_zfs_arc",
+    "pve_vm": "metrics_pve_vm",
 }
 
 WINDOW_PRESETS = {

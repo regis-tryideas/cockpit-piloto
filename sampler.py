@@ -9,6 +9,7 @@ from collectors import logical_disk as ldisk_col
 from collectors import memory as mem_col
 from collectors import network as net_col
 from collectors import pressure as psi_col
+from collectors import proxmox as pve_col
 from collectors import zfs as zfs_col
 
 log = logging.getLogger("cockpit.sampler")
@@ -158,12 +159,31 @@ def _sample_once(ts: int):
             }])
 
 
+def _sample_pve(ts: int):
+    pve = _safe(pve_col.collect) or {}
+    if pve.get("error") or not pve.get("vms"):
+        return
+    rows = []
+    for v in pve["vms"]:
+        rows.append({
+            "ts": ts, "vmid": v["vmid"],
+            "type": v["type"], "name": v["name"], "status": v["status"],
+            "cpu_pct": v["cpu_pct"], "cpu_cores": v["cpu_cores"],
+            "mem_used_b": v["mem_used_b"], "mem_max_b": v["mem_max_b"],
+            "diskread_b": v["diskread_b"], "diskwrite_b": v["diskwrite_b"],
+            "netin_b": v["netin_b"], "netout_b": v["netout_b"],
+        })
+    if rows:
+        db.insert_many("metrics_pve_vm", rows)
+
+
 def _loop():
     global _last_purge
     while True:
         ts = int(time.time())
         try:
             _sample_once(ts)
+            _sample_pve(ts)
         except Exception as e:
             log.exception("sampling falhou: %s", e)
         if ts - _last_purge >= PURGE_INTERVAL_SECONDS:
