@@ -23,6 +23,7 @@
     <a class="{% if tab=='network' %}active{% endif %}" href="{{ url_for('view_network') }}">Rede</a>
     <a class="{% if tab=='system' %}active{% endif %}" href="{{ url_for('view_system') }}">Sistema</a>
     <a class="{% if tab=='numa' %}active{% endif %}" href="{{ url_for('view_numa') }}">NUMA</a>
+    <a class="{% if tab=='logs' %}active{% endif %}" href="{{ url_for('view_logs') }}">Logs</a>
   </nav>
   <div class="user">
     <span>{{ username }}</span>
@@ -44,6 +45,85 @@
 // Soft refresh: busca o HTML da própria URL e substitui apenas os
 // painéis estáticos (sem canvas/gráfico). Painéis com gráfico recebem
 // um evento 'cockpit:refresh' para recarregarem seus dados via /api.
+// Sortable tables: torna toda <table> com <thead> clicável.
+// Detecta o tipo de cada coluna (numérico, %, "X GiB", texto) na 1ª linha.
+window.cockpitInstallSorters = function(root){
+  (root || document).querySelectorAll("table").forEach(table => {
+    const thead = table.querySelector("thead");
+    const tbody = table.querySelector("tbody");
+    if (!thead || !tbody) return;
+    if (table.dataset.sortable === "1") return;
+    if (table.classList.contains("distance-matrix")
+        || table.classList.contains("sysctl-table")) return;
+    table.dataset.sortable = "1";
+    const headers = thead.querySelectorAll("th");
+    headers.forEach((th, idx) => {
+      // pula colunas vazias (badges sem texto)
+      if (!th.textContent.trim() && idx === 0) return;
+      th.classList.add("sortable");
+      th.addEventListener("click", () => sort(table, idx, th));
+    });
+  });
+
+  function extractValue(td){
+    if (!td) return "";
+    // tenta data-sort primeiro (usuário pode customizar)
+    if (td.dataset.sort !== undefined) return td.dataset.sort;
+    // bar-value tem o número limpo
+    const barVal = td.querySelector(".bar-value");
+    if (barVal) return barVal.textContent.trim();
+    return td.textContent.trim();
+  }
+
+  function parseValue(s){
+    if (s == null) return { num: NaN, str: "" };
+    const str = String(s).trim();
+    // remove vírgulas de milhar pra inteiros tipo "1,234,567"
+    const cleaned = str.replace(/,(?=\d{3}\b)/g, "");
+    // tenta extrair número (com unidade) ex: "12.5 GiB", "98.2%", "1.23x"
+    const m = cleaned.match(/^-?\d+(?:[.,]\d+)?/);
+    if (m) {
+      const num = parseFloat(m[0].replace(",", "."));
+      // detecta unidades pra normalizar (GiB → bytes etc)
+      let mult = 1;
+      const lower = cleaned.toLowerCase();
+      if (/\bkib?\b/.test(lower)) mult = 1024;
+      else if (/\bmib?\b/.test(lower)) mult = 1024 ** 2;
+      else if (/\bgib?\b/.test(lower)) mult = 1024 ** 3;
+      else if (/\btib?\b/.test(lower)) mult = 1024 ** 4;
+      return { num: num * mult, str };
+    }
+    return { num: NaN, str };
+  }
+
+  function sort(table, colIdx, th){
+    const tbody = table.querySelector("tbody");
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    const cur = th.dataset.sortDir;
+    const dir = cur === "asc" ? "desc" : "asc";
+
+    table.querySelectorAll("th").forEach(h => {
+      h.removeAttribute("data-sort-dir");
+      h.classList.remove("sorted-asc", "sorted-desc");
+    });
+    th.dataset.sortDir = dir;
+    th.classList.add(dir === "asc" ? "sorted-asc" : "sorted-desc");
+
+    rows.sort((a, b) => {
+      const va = parseValue(extractValue(a.cells[colIdx]));
+      const vb = parseValue(extractValue(b.cells[colIdx]));
+      let cmp;
+      if (!isNaN(va.num) && !isNaN(vb.num)) {
+        cmp = va.num - vb.num;
+      } else {
+        cmp = va.str.localeCompare(vb.str, "pt-BR", { numeric: true });
+      }
+      return dir === "asc" ? cmp : -cmp;
+    });
+    rows.forEach(r => tbody.appendChild(r));
+  }
+};
+
 window.cockpitSoftRefresh = async function(){
   document.body.classList.add('refreshing');
   try {
@@ -80,6 +160,8 @@ window.cockpitSoftRefresh = async function(){
     document.querySelectorAll(".chart-wrap canvas").forEach(c => {
       c.dispatchEvent(new Event("cockpit:refresh"));
     });
+    // Reinstala sorters (innerHTML novo perdeu listeners)
+    window.cockpitInstallSorters();
   } finally {
     document.body.classList.remove('refreshing');
   }
@@ -114,6 +196,9 @@ window.cockpitSoftRefresh = async function(){
       window.cockpitSoftRefresh();
     });
   });
+
+  // Sorters em todas as tabelas
+  window.cockpitInstallSorters();
 })();
 </script>
 {% endblock %}

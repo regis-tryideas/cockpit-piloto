@@ -12,7 +12,9 @@ import sampler
 import version
 from collectors import cpu as cpu_col
 from collectors import disk as disk_col
+from collectors import kernel as kernel_col
 from collectors import logical_disk as ldisk_col
+from collectors import logs as logs_col
 from collectors import memory as mem_col
 from collectors import network as net_col
 from collectors import numa as numa_col
@@ -33,6 +35,14 @@ app.config["SECRET_KEY"] = os.environ.get(
 
 
 PVE_DETECTED = pve_col.detect()["ok"]
+
+
+@app.template_filter("format_ts")
+def _format_ts(ts):
+    if not ts:
+        return "—"
+    import datetime
+    return datetime.datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 @app.before_request
@@ -171,12 +181,50 @@ def view_logical_disk():
 @login_required
 def view_system():
     data = system_col.collect(top_limit=20)
+    data["kernel"] = kernel_col.collect()
     return render_template(
         "_panel_system.html",
         tab="system",
         heading="Sistema",
         username=g.session["username"],
         data=data,
+    )
+
+
+@app.get("/logs")
+@login_required
+def view_logs():
+    source = request.args.get("source", "journal")
+    priority = int(request.args.get("priority", "7"))
+    since = request.args.get("since", "1h")
+    unit = request.args.get("unit", "").strip() or None
+    search = request.args.get("search", "").strip()
+    lines = int(request.args.get("lines", "200"))
+
+    if source == "kernel":
+        result = logs_col.kernel_buffer(lines=lines, search=search)
+    else:
+        result = logs_col.journal(
+            priority=priority, unit=unit, since=since,
+            search=search, lines=lines,
+        )
+
+    return render_template(
+        "_panel_logs.html",
+        tab="logs",
+        heading="Logs",
+        username=g.session["username"],
+        data={
+            "source": source,
+            "priority": priority,
+            "since": since,
+            "unit": unit or "",
+            "search": search,
+            "lines": lines,
+            "result": result,
+            "windows": logs_col.WINDOW_PRESETS,
+            "priority_labels": logs_col.PRIORITY_LABELS,
+        },
     )
 
 

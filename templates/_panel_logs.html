@@ -1,0 +1,144 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import explainer %}
+{% block panel %}
+
+{# ---------- Filtros ---------- #}
+<section class="panel">
+  <h3>Filtros</h3>
+  <form method="get" class="logs-filter">
+    <div class="logs-source">
+      <label class="chip">
+        <input type="radio" name="source" value="journal"
+          {% if data.source == 'journal' %}checked{% endif %}>
+        <span>journal (systemd)</span>
+      </label>
+      <label class="chip">
+        <input type="radio" name="source" value="kernel"
+          {% if data.source == 'kernel' %}checked{% endif %}>
+        <span>kernel ring buffer (dmesg)</span>
+      </label>
+    </div>
+
+    <div class="logs-row">
+      <label>
+        <span class="filter-label">Prioridade máx</span>
+        <select name="priority">
+          {% for p in range(8) %}
+          <option value="{{ p }}" {% if data.priority == p %}selected{% endif %}>
+            {{ p }} · {{ data.priority_labels[p] }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span class="filter-label">Janela</span>
+        <select name="since">
+          {% for k, v in data.windows.items() %}
+          <option value="{{ k }}" {% if data.since == k %}selected{% endif %}>{{ k }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span class="filter-label">Linhas</span>
+        <select name="lines">
+          {% for n in [50, 100, 200, 500, 1000, 2000] %}
+          <option value="{{ n }}" {% if data.lines == n %}selected{% endif %}>{{ n }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="grow">
+        <span class="filter-label">Unit (opcional)</span>
+        <input type="text" name="unit" value="{{ data.unit }}"
+          placeholder="ex: nginx.service, postgresql@*.service">
+      </label>
+      <label class="grow">
+        <span class="filter-label">Buscar texto</span>
+        <input type="text" name="search" value="{{ data.search }}"
+          placeholder="ex: out of memory">
+      </label>
+      <button type="submit">Aplicar</button>
+      <a class="link" href="{{ url_for('view_logs') }}">Limpar</a>
+    </div>
+  </form>
+</section>
+
+{# ---------- Resultado ---------- #}
+{% if data.result.error %}
+<section class="panel">
+  <div class="alert">{{ data.result.error }}</div>
+</section>
+{% elif not data.result.rows %}
+<section class="panel">
+  <p class="hint-inline">Nenhuma entrada encontrada com esses filtros.</p>
+</section>
+{% else %}
+<section class="panel">
+  <h3>
+    {{ data.result.rows|length }} entradas
+    <small>· fonte: <strong>{{ data.source }}</strong>
+    {% if data.source == 'journal' %}
+      · prioridade ≤ {{ data.priority }} ({{ data.priority_labels[data.priority] }})
+      · janela {{ data.since }}
+    {% endif %}
+    </small>
+  </h3>
+
+  {% if data.source == 'journal' %}
+  <div class="table-wrap logs-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Quando</th>
+          <th>Prio</th>
+          <th>Unit / Comm</th>
+          <th>PID</th>
+          <th>Mensagem</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in data.result.rows %}
+        <tr class="prio-{{ r.priority }}">
+          <td class="mono">
+            {% if r.ts %}{{ r.ts | format_ts }}{% else %}—{% endif %}
+          </td>
+          <td>
+            <span class="badge prio-badge prio-{{ r.priority }}">
+              {{ r.priority_label }}
+            </span>
+          </td>
+          <td><span class="mono">{{ r.unit or r.comm }}</span></td>
+          <td class="mono">{{ r.pid }}</td>
+          <td class="log-msg mono">{{ r.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="table-wrap logs-table">
+    <table>
+      <thead>
+        <tr><th>Quando</th><th>Mensagem</th></tr>
+      </thead>
+      <tbody>
+        {% for r in data.result.rows %}
+        <tr>
+          <td class="mono">{{ r.ts or '—' }}</td>
+          <td class="log-msg mono">{{ r.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+{{ explainer('Como ler', [
+  ('Prioridade', '0=emerg, 1=alert, 2=crit, 3=err, 4=warning, 5=notice, 6=info, 7=debug. Ao filtrar por "prioridade máx", o journal retorna tudo &lt;= esse nível, então prio=4 mostra warnings, errors e tudo acima.'),
+  ('Unit',       'Nome do serviço systemd (<code>nginx.service</code>, <code>postgresql@13-main.service</code>). Aceita curinga (<code>*</code>). Vazio = todas as units.'),
+  ('Buscar',     'Filtro grep regex aplicado ao journal antes de retornar — mais rápido que filtrar no cliente. Não case-sensitive por padrão.'),
+  ('Kernel ring buffer','dmesg lê mensagens do kernel (drivers, OOM killer, mount/umount, NIC link state). Útil quando algo de hardware ou driver dá problema.'),
+  ('Janela',     'Define o ponto de partida da consulta (<code>--since</code> do journalctl). Janelas curtas são bem mais rápidas em journals grandes.'),
+]) }}
+{% endblock %}

@@ -194,6 +194,105 @@
 </section>
 {% endif %}
 
+{# ---------- Kernel ---------- #}
+{% if data.kernel %}
+<section class="panel">
+  <h3 id="kernel">Kernel</h3>
+  <div class="numa-grid">
+    <div>
+      <div class="kv-label">Release</div>
+      <div class="kv-value mono">{{ data.kernel.info.release }}</div>
+    </div>
+    <div>
+      <div class="kv-label">Arquitetura</div>
+      <div class="kv-value mono">{{ data.kernel.info.arch }}</div>
+    </div>
+    <div class="span-2">
+      <div class="kv-label">Versão completa</div>
+      <div class="kv-value mono">{{ data.kernel.info.version_full }}</div>
+    </div>
+    <div class="span-2">
+      <div class="kv-label">Boot cmdline</div>
+      <div class="kv-value mono">{{ data.kernel.info.cmdline }}</div>
+    </div>
+    <div>
+      <div class="kv-label">Módulos carregados</div>
+      <div class="kv-value">{{ data.kernel.modules_count }}</div>
+    </div>
+    <div>
+      <div class="kv-label">Tainted</div>
+      <div class="kv-value">
+        {% if data.kernel.taint.value == 0 %}
+          <span class="badge ok">limpo</span>
+        {% else %}
+          <span class="badge warn-bg">{{ data.kernel.taint.value }}</span>
+          <small>{{ data.kernel.taint.flags|map(attribute='symbol')|join(' ') }}</small>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if data.kernel.taint.flags %}
+  <h4>Flags de taint</h4>
+  <ul class="taint-list">
+    {% for f in data.kernel.taint.flags %}
+    <li><span class="mono">{{ f.symbol }}</span> · bit {{ f.bit }} — {{ f.desc }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <h4>Sysctl tunables</h4>
+  <div class="sysctl-grid">
+    {% for group in data.kernel.sysctls %}
+    <div class="sysctl-group">
+      <div class="sysctl-group-title">{{ group.label }}</div>
+      <table class="sysctl-table">
+        <tbody>
+          {% for it in group.entries %}
+          <tr>
+            <td><span class="mono">{{ it.key }}</span></td>
+            <td class="mono">{{ it.value if it.value is not none else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+
+  <h4>Top módulos por tamanho</h4>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Módulo</th><th>Tamanho</th><th>Em uso por</th><th>Depende de</th><th>Estado</th></tr>
+      </thead>
+      <tbody>
+        {% for m in data.kernel.top_modules %}
+        <tr>
+          <td><span class="mono">{{ m.name }}</span></td>
+          <td>{{ m.size_kb }} kB</td>
+          <td>{{ m.instances }}</td>
+          <td><span class="mono">{{ m.depends or '—' }}</span></td>
+          <td><span class="badge">{{ m.state or '—' }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{{ explainer('Como ler estas métricas do kernel', [
+  ('Release',        'Versão do kernel rodando — útil para checar CVEs e suporte a recursos como PSI, eBPF, io_uring etc.'),
+  ('Boot cmdline',   'Argumentos passados pelo bootloader. Aqui você vê opções como <code>quiet</code>, <code>nomodeset</code>, <code>iommu=pt</code>, <code>transparent_hugepage=never</code>, etc.'),
+  ('Tainted',        'Bit-mask: quando &gt; 0, indica que algo "sujou" o kernel (módulo proprietário, oops, warning, módulo unsigned). Suporte do upstream pode ser recusado para kernels tainted.'),
+  ('vm.swappiness',  'Quanto o kernel prefere usar swap em vez de descartar cache. Padrão 60. Servidores de DB normalmente usam 1–10.'),
+  ('vm.dirty_*',     'Limites de páginas modificadas em RAM antes de forçar flush. Tunar quando há muita escrita em rajadas.'),
+  ('fs.file-max',    'Teto absoluto de file descriptors no sistema. Use a métrica de FDs (acima) para saber a folga.'),
+  ('net.core.somaxconn','Tamanho da fila de accept(). Web servers ocupados pedem aumentar (ex: 4096+).'),
+  ('Top módulos',    'Maiores módulos carregados. ZFS, NVIDIA e drivers de storage costumam dominar — ajuda a identificar o que está usando RAM do kernel.'),
+]) }}
+{% endif %}
+
 {{ explainer('Como ler estas métricas', [
   ('R · running',   'Processos prontos ou rodando no scheduler. Quando &gt; nº de cores em janelas longas, indica saturação de CPU.'),
   ('S · sleeping',  'Aguardando algum evento (timer, IO interruptível, signal). É o estado da maioria dos processos saudáveis.'),
