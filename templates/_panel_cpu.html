@@ -1,8 +1,42 @@
 {% extends "dashboard.html" %}
+{% from "_history.html" import history_block, explainer %}
 {% block panel %}
 {% if data.error %}
   <div class="alert">{{ data.error }}</div>
 {% else %}
+
+{{ history_block(
+  'cpu-busy-chart',
+  'Uso da CPU',
+  'cpu',
+  '[
+    {"label":"busy %","key":"busy","color":"#58a6ff"},
+    {"label":"iowait %","key":"iowait","color":"#f0883e"},
+    {"label":"sys %","key":"sys","color":"#a371f7"},
+    {"label":"usr %","key":"usr","color":"#3fb950"}
+  ]',
+  y_max=100, y_label='%'
+) }}
+
+{{ history_block(
+  'cpu-load-chart',
+  'Load average',
+  'cpu',
+  '[
+    {"label":"load 1m","key":"load1","color":"#58a6ff"},
+    {"label":"load 5m","key":"load5","color":"#a371f7"},
+    {"label":"load 15m","key":"load15","color":"#3fb950"}
+  ]',
+  y_label='load'
+) }}
+
+{{ explainer('Como ler estas métricas', [
+  ('busy %',  'Tempo total em que a CPU não estava ociosa. É o complemento de <code>idle</code>: 100 − %idle.'),
+  ('iowait %','Fração do tempo em que a CPU estava ociosa <em>esperando</em> por I/O em disco. Alto = gargalo de disco, não de CPU.'),
+  ('usr %',   'Tempo executando processos em <em>user mode</em> (aplicações).'),
+  ('sys %',   'Tempo em <em>kernel mode</em> (chamadas de sistema, drivers). Alto sustentado pode indicar hot path no kernel.'),
+  ('Load avg','Número médio de processos rodando ou prontos para rodar nos últimos 1/5/15 min. Use como termômetro: load > nº de cores em janelas longas indica saturação.'),
+]) }}
 <section class="panel summary-cards">
   <div class="card">
     <div class="card-label">Uso total</div>

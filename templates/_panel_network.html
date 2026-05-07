@@ -1,8 +1,33 @@
 {% extends "dashboard.html" %}
+{% from "_history.html" import history_block, explainer %}
 {% block panel %}
 {% if data.error %}
   <div class="alert">{{ data.error }}</div>
 {% else %}
+
+{{ history_block(
+  'net-rx-chart',
+  'Recebido (RX) por interface',
+  'net',
+  '[{"label":"RX","key":"rx_kbps","groupBy":"iface"}]',
+  y_label='kB/s'
+) }}
+
+{{ history_block(
+  'net-tx-chart',
+  'Enviado (TX) por interface',
+  'net',
+  '[{"label":"TX","key":"tx_kbps","groupBy":"iface"}]',
+  y_label='kB/s'
+) }}
+
+{{ explainer('Como ler estas métricas', [
+  ('RX kB/s · TX kB/s', 'Bytes recebidos/transmitidos por segundo, em kilobytes. Para comparar com link de 1 Gbit/s lembre que 1 Gbit/s ≈ 125 MB/s ≈ 128.000 kB/s.'),
+  ('RX pkt/s · TX pkt/s', 'Pacotes por segundo. Número alto com bytes baixos indica tráfego de pequenos pacotes (overhead alto).'),
+  ('errors',  'Frames recebidos/enviados com erro de checksum, framing etc. Qualquer valor não-zero crescendo merece investigação (cabo, MTU, NIC).'),
+  ('drops',   'Pacotes descartados pelo kernel (geralmente ring buffer da NIC cheio). Indica que a aplicação ou kernel não está consumindo rápido o suficiente.'),
+  ('lo',      'Loopback, tráfego local — incluso na lista mas raramente é gargalo.'),
+]) }}
 <section class="panel">
   <h3>Tráfego por interface <small>(amostra de {{ data.interval }}s)</small></h3>
   <div class="table-wrap">

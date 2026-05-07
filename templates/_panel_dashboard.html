@@ -1,5 +1,29 @@
 {% extends "dashboard.html" %}
+{% from "_history.html" import history_block, explainer %}
 {% block panel %}
+
+{# ---------- Histórico consolidado ---------- #}
+{{ history_block(
+  'overview-chart',
+  'Visão geral — CPU, memória e disco',
+  'cpu',
+  '[
+    {"label":"CPU busy %","key":"busy","color":"#58a6ff"},
+    {"label":"iowait %","key":"iowait","color":"#f0883e"}
+  ]',
+  y_max=100, y_label='%'
+) }}
+
+{{ history_block(
+  'overview-mem-chart',
+  'Memória ao longo do tempo',
+  'mem',
+  '[
+    {"label":"RAM %","key":"used_pct","color":"#3fb950"},
+    {"label":"Swap %","key":"swap_pct","color":"#f0883e"}
+  ]',
+  y_max=100, y_label='%'
+) }}
 
 {# ---------- Pressure (PSI) ---------- #}
 <section class="panel">
@@ -41,6 +65,28 @@
   </p>
   {% endif %}
 </section>
+
+{{ history_block(
+  'psi-chart',
+  'PSI ao longo do tempo (avg10)',
+  'psi',
+  '[
+    {"label":"CPU some","key":"cpu_some10","color":"#58a6ff"},
+    {"label":"Mem some","key":"mem_some10","color":"#3fb950"},
+    {"label":"Mem full","key":"mem_full10","color":"#f0883e"},
+    {"label":"IO some","key":"io_some10","color":"#a371f7"},
+    {"label":"IO full","key":"io_full10","color":"#f85149"}
+  ]',
+  y_label='%'
+) }}
+
+{{ explainer('Entendendo PSI (Pressure Stall Information)', [
+  ('O que mede',  'Percentual do tempo em que tarefas ficaram bloqueadas aguardando um recurso (CPU, memória ou I/O).'),
+  ('some',        'Ao menos uma tarefa estava bloqueada — sinaliza pressão pontual.'),
+  ('full',        '<em>Todas</em> as tarefas runnable estavam bloqueadas — sinaliza contenção severa (não existe para CPU, só memória e IO).'),
+  ('avg10/60/300','Média móvel exponencial nas janelas de 10s, 60s e 300s. Boas faixas: &lt;10% normal, 10–50% pressão moderada, &gt;50% crítico.'),
+  ('Quando usar', 'PSI &gt; 0 e crescendo é o sinal mais cedo de saturação — antes de iowait alto ou OOM. Use para diagnosticar gargalo: se IO some sobe e CPU some não, o gargalo é disco.'),
+]) }}
 
 {# ---------- Resumo CPU/Mem/Net ---------- #}
 <section class="summary-cards">

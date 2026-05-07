@@ -6,11 +6,12 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "cockpit.db"
 SESSION_TTL_SECONDS = 8 * 3600
+HISTORY_RETENTION_SECONDS = 72 * 3600
 
 
 @contextmanager
 def connect():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -21,6 +22,8 @@ def connect():
 
 def init():
     with connect() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -39,6 +42,67 @@ def init():
             );
             CREATE INDEX IF NOT EXISTS idx_login_attempts_created
                 ON login_attempts(created_at);
+
+            CREATE TABLE IF NOT EXISTS metrics_cpu (
+                ts INTEGER PRIMARY KEY,
+                busy REAL, iowait REAL, sys REAL, usr REAL,
+                load1 REAL, load5 REAL, load15 REAL
+            );
+
+            CREATE TABLE IF NOT EXISTS metrics_mem (
+                ts INTEGER PRIMARY KEY,
+                used_pct REAL, swap_pct REAL,
+                used_kb INTEGER, available_kb INTEGER, total_kb INTEGER,
+                buffers_kb INTEGER, cached_kb INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS metrics_disk (
+                ts INTEGER NOT NULL,
+                device TEXT NOT NULL,
+                util REAL, r_iops REAL, w_iops REAL,
+                r_kbs REAL, w_kbs REAL,
+                r_await REAL, w_await REAL, aqu_sz REAL,
+                PRIMARY KEY (ts, device)
+            );
+            CREATE INDEX IF NOT EXISTS idx_disk_ts ON metrics_disk(ts);
+
+            CREATE TABLE IF NOT EXISTS metrics_net (
+                ts INTEGER NOT NULL,
+                iface TEXT NOT NULL,
+                rx_kbps REAL, tx_kbps REAL,
+                rx_pps REAL, tx_pps REAL,
+                rx_errors INTEGER, tx_errors INTEGER,
+                PRIMARY KEY (ts, iface)
+            );
+            CREATE INDEX IF NOT EXISTS idx_net_ts ON metrics_net(ts);
+
+            CREATE TABLE IF NOT EXISTS metrics_psi (
+                ts INTEGER PRIMARY KEY,
+                cpu_some10 REAL,
+                mem_some10 REAL, mem_full10 REAL,
+                io_some10 REAL,  io_full10 REAL
+            );
+
+            CREATE TABLE IF NOT EXISTS metrics_zfs_pool (
+                ts INTEGER NOT NULL,
+                pool TEXT NOT NULL,
+                capacity_pct REAL, alloc_b INTEGER, free_b INTEGER,
+                read_iops REAL, write_iops REAL,
+                read_bw REAL, write_bw REAL,
+                fragmentation_pct REAL,
+                PRIMARY KEY (ts, pool)
+            );
+            CREATE INDEX IF NOT EXISTS idx_zfs_pool_ts ON metrics_zfs_pool(ts);
+
+            CREATE TABLE IF NOT EXISTS metrics_zfs_arc (
+                ts INTEGER PRIMARY KEY,
+                size_b INTEGER, c_max_b INTEGER,
+                fill_pct REAL,
+                hit_ratio REAL,
+                hits_delta INTEGER, misses_delta INTEGER,
+                mfu_size_b INTEGER, mru_size_b INTEGER,
+                l2_hit_ratio REAL
+            );
             """
         )
 
@@ -100,3 +164,39 @@ def recent_failed_attempts(remote_addr: str, window_seconds: int = 300) -> int:
             (remote_addr, cutoff),
         ).fetchone()
     return row["c"] if row else 0
+
+
+HISTORY_TABLES = (
+    "metrics_cpu", "metrics_mem", "metrics_disk", "metrics_net",
+    "metrics_psi", "metrics_zfs_pool", "metrics_zfs_arc",
+)
+
+
+def purge_history(retention_seconds: int = HISTORY_RETENTION_SECONDS):
+    cutoff = int(time.time()) - retention_seconds
+    with connect() as conn:
+        for table in HISTORY_TABLES:
+            conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))
+
+
+def fetch_history(table: str, window_seconds: int,
+                  group_col: str | None = None) -> list[dict]:
+    if table not in HISTORY_TABLES:
+        raise ValueError(f"tabela inválida: {table}")
+    cutoff = int(time.time()) - window_seconds
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM {table} WHERE ts >= ? ORDER BY ts ASC",
+            (cutoff,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_many(table: str, rows: list[dict]):
+    if not rows:
+        return
+    cols = list(rows[0].keys())
+    placeholders = ",".join(["?"] * len(cols))
+    sql = f"INSERT OR REPLACE INTO {table} ({','.join(cols)}) VALUES ({placeholders})"
+    with connect() as conn:
+        conn.executemany(sql, [tuple(r[c] for c in cols) for r in rows])

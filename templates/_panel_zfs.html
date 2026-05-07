@@ -1,4 +1,5 @@
 {% extends "dashboard.html" %}
+{% from "_history.html" import history_block, explainer %}
 {% block panel %}
 {% if data.error %}
 <section class="panel">
@@ -87,7 +88,7 @@
 
 {# ---------- ARC ---------- #}
 {% if data.arc %}
-<section class="panel summary-cards">
+<section class="summary-cards">
   <div class="card">
     <div class="card-label">ARC em uso</div>
     <div class="card-value">{{ data.arc.size_gib }} GiB</div>
@@ -99,26 +100,228 @@
     </div>
   </div>
   <div class="card">
-    <div class="card-label">Hit ratio</div>
+    <div class="card-label">Hit ratio (acumulado)</div>
     <div class="card-value">{{ data.arc.hit_ratio_pct }}%</div>
     <div class="card-foot">
-      hits {{ data.arc.hits }} · misses {{ data.arc.misses }}
+      hits {{ '{:,}'.format(data.arc.hits) }} · misses {{ '{:,}'.format(data.arc.misses) }}
     </div>
   </div>
   <div class="card">
     <div class="card-label">L2ARC</div>
-    {% set l2_total = data.arc.l2_hits + data.arc.l2_misses %}
     <div class="card-value">
-      {% if l2_total %}
-        {{ (100.0 * data.arc.l2_hits / l2_total)|round(2) }}%
+      {% if data.arc.l2_hits + data.arc.l2_misses %}
+        {{ data.arc.l2_hit_ratio_pct }}%
       {% else %}—{% endif %}
     </div>
     <div class="card-foot">
-      hits {{ data.arc.l2_hits }} · misses {{ data.arc.l2_misses }}
+      tamanho {{ data.arc.l2_size_gib }} GiB · hits {{ data.arc.l2_hits }} · misses {{ data.arc.l2_misses }}
     </div>
+  </div>
+  <div class="card">
+    <div class="card-label">MFU / MRU</div>
+    <div class="card-value small">
+      {{ data.arc.mfu_size_gib }} / {{ data.arc.mru_size_gib }} GiB
+    </div>
+    <div class="card-foot">
+      ghost hits MFU {{ data.arc.mfu_ghost_hits }} · MRU {{ data.arc.mru_ghost_hits }}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label">Compressão (em RAM)</div>
+    <div class="card-value">{{ data.arc.compress_ratio }}x</div>
+    <div class="card-foot">
+      {{ data.arc.compressed_size_gib }} → {{ data.arc.uncompressed_size_gib }} GiB
+    </div>
+  </div>
+  {% if data.snapshots and data.snapshots.count %}
+  <div class="card">
+    <div class="card-label">Snapshots</div>
+    <div class="card-value">{{ data.snapshots.count }}</div>
+    <div class="card-foot">{{ data.snapshots.total_used_gib }} GiB usados</div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h3>Hit ratio por categoria <small>(acumulado desde o boot)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Categoria</th><th>Hits</th><th>Misses</th><th>Hit ratio</th></tr>
+      </thead>
+      <tbody>
+        {% for label, key in [
+          ('Demand data',     'demand_data'),
+          ('Demand metadata', 'demand_metadata'),
+          ('Prefetch data',   'prefetch_data'),
+          ('Prefetch metadata','prefetch_metadata'),
+        ] %}
+        {% set s = data.arc[key] %}
+        <tr>
+          <td>{{ label }}</td>
+          <td>{{ '{:,}'.format(s.hits) }}</td>
+          <td>{{ '{:,}'.format(s.misses) }}</td>
+          <td>
+            <div class="bar {% if s.hit_ratio_pct < 80 %}warn{% endif %}">
+              <span style="width: {{ [s.hit_ratio_pct,100]|min }}%"></span>
+            </div>
+            <span class="bar-value">{{ s.hit_ratio_pct }}%</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{{ history_block(
+  'arc-size-chart',
+  'Tamanho do ARC ao longo do tempo',
+  'zfs_arc',
+  '[
+    {"label":"ARC size (B)","key":"size_b","color":"#58a6ff"},
+    {"label":"c_max (B)","key":"c_max_b","color":"#6e7681"}
+  ]',
+  y_label='bytes'
+) }}
+
+{{ history_block(
+  'arc-hit-chart',
+  'ARC hit ratio (intervalo)',
+  'zfs_arc',
+  '[{"label":"Hit ratio %","key":"hit_ratio","color":"#3fb950"}]',
+  y_max=100, y_label='%'
+) }}
+{% endif %}
+
+{# ---------- IO histórico por pool ---------- #}
+{% if data.pools %}
+{{ history_block(
+  'zfs-iops-chart',
+  'IOPS por pool',
+  'zfs_pool',
+  '[{"label":"read+write iops","key":"read_iops","groupBy":"pool"}]',
+  y_label='iops'
+) }}
+
+{{ history_block(
+  'zfs-cap-chart',
+  '%capacity por pool',
+  'zfs_pool',
+  '[{"label":"capacity %","key":"capacity_pct","groupBy":"pool"}]',
+  y_max=100, y_label='%'
+) }}
+{% endif %}
+
+{# ---------- Scrub status ---------- #}
+{% set has_scrub = data.scrubs.values()|select|list %}
+{% if has_scrub %}
+<section class="panel">
+  <h3>Scrub / Resilver</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Pool</th><th>Status</th><th>%</th><th>Velocidade</th><th>ETA</th></tr>
+      </thead>
+      <tbody>
+        {% for pool, s in data.scrubs.items() %}
+        {% if s %}
+        <tr>
+          <td><strong>{{ pool }}</strong></td>
+          <td>{{ s.completed or s.action or '—' }}</td>
+          <td>
+            {% if s.progress_pct %}
+            <div class="bar"><span style="width: {{ s.progress_pct }}%"></span></div>
+            <span class="bar-value">{{ s.progress_pct }}%</span>
+            {% else %}—{% endif %}
+          </td>
+          <td>{{ s.speed or '—' }}</td>
+          <td>{{ s.eta or '—' }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </section>
 {% endif %}
+
+{# ---------- vdev IO ---------- #}
+{% if data.vdev_io %}
+<section class="panel">
+  <h3>I/O por vdev <small>(amostra de {{ data.interval }}s)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>NAME</th><th>Alloc</th><th>Free</th>
+          <th>Read IOPS</th><th>Write IOPS</th>
+          <th>Read kB/s</th><th>Write kB/s</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in data.vdev_io %}
+        <tr>
+          <td style="padding-left: {{ 10 + v.indent*8 }}px"><span class="mono">{{ v.name }}</span></td>
+          <td>{{ v.alloc_gib }} GiB</td>
+          <td>{{ v.free_gib }} GiB</td>
+          <td>{{ v.read_iops }}</td>
+          <td>{{ v.write_iops }}</td>
+          <td>{{ (v.read_bw/1024)|round(1) }}</td>
+          <td>{{ (v.write_bw/1024)|round(1) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- Latência ---------- #}
+{% if data.latency %}
+<section class="panel">
+  <h3>Latências por pool <small>(ns)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Pool</th>
+          <th>total_wait read</th><th>total_wait write</th>
+          <th>disk_wait read</th><th>disk_wait write</th>
+          <th>syncq read</th><th>syncq write</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in data.latency %}
+        <tr>
+          <td><strong>{{ l.name }}</strong></td>
+          <td>{{ '{:,}'.format(l.total_wait_read_ns) }}</td>
+          <td>{{ '{:,}'.format(l.total_wait_write_ns) }}</td>
+          <td>{{ '{:,}'.format(l.disk_wait_read_ns) }}</td>
+          <td>{{ '{:,}'.format(l.disk_wait_write_ns) }}</td>
+          <td>{{ '{:,}'.format(l.syncq_wait_read_ns) }}</td>
+          <td>{{ '{:,}'.format(l.syncq_wait_write_ns) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{{ explainer('Como ler estas métricas do ZFS', [
+  ('ARC',         'Adaptive Replacement Cache — cache em RAM gerenciado pelo ZFS. Composto de duas listas: <strong>MRU</strong> (Most Recently Used, blocos lidos uma vez) e <strong>MFU</strong> (Most Frequently Used, blocos relidos). O ZFS ajusta o equilíbrio dinamicamente.'),
+  ('Ghost lists', 'MRU/MFU ghost lists guardam metadados de blocos <em>já evictados</em>. Hits em ghost indicam que o ARC está pequeno — dados que poderiam estar cacheados foram expulsos.'),
+  ('c_max',       'Tamanho máximo do ARC. Pode ser ajustado via <code>/sys/module/zfs/parameters/zfs_arc_max</code>.'),
+  ('L2ARC',       'Cache de segundo nível em SSD. Hit ratio baixo é comum se ARC dá conta; importante quando ARC não cabe em RAM.'),
+  ('Hit ratio (intervalo)', 'Calculado a partir do delta de hits/misses entre amostras de 30s — reflete o comportamento atual da carga, não acumulado desde o boot.'),
+  ('fragmentation %', 'Quanto o pool está fragmentado. Acima de 50% afeta escritas sequenciais; o ZFS não desfragmenta sozinho.'),
+  ('total_wait',  'Tempo total que uma requisição passou no kernel ZFS (fila + disco).'),
+  ('disk_wait',   'Tempo gasto no device físico apenas. Se total_wait &gt;&gt; disk_wait, a contenção está nas filas internas do ZFS.'),
+  ('syncq_wait',  'Tempo na fila de I/O síncrono (write barriers, fsync). Alto = aplicação pedindo durabilidade frequentemente.'),
+  ('Scrub',       'Verificação periódica de checksums em todos os blocos. Recomendado mensalmente em discos rotacionais, semanalmente em SSDs. Erros corrigidos durante scrub indicam disco morrendo ou bit rot.'),
+  ('Snapshots',   'Cópias atômicas point-in-time. Ocupam apenas o delta (copy-on-write). Excesso pode atrapalhar performance de escrita.'),
+]) }}
 
 {# ---------- Status detalhado ---------- #}
 {% for pool, st in data.statuses.items() %}

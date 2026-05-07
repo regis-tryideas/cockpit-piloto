@@ -1,10 +1,44 @@
 {% extends "dashboard.html" %}
+{% from "_history.html" import history_block, explainer %}
 {% block panel %}
 {% if data.error %}
   <div class="alert">{{ data.error }}</div>
 {% else %}
+
+{{ history_block(
+  'disk-util-chart',
+  '%util por device',
+  'disk',
+  '[{"label":"util","key":"util","groupBy":"device"}]',
+  y_max=100, y_label='% util'
+) }}
+
+{{ history_block(
+  'disk-throughput-chart',
+  'Throughput de leitura (kB/s)',
+  'disk',
+  '[{"label":"rkB/s","key":"r_kbs","groupBy":"device"}]',
+  y_label='kB/s'
+) }}
+
+{{ history_block(
+  'disk-write-chart',
+  'Throughput de escrita (kB/s)',
+  'disk',
+  '[{"label":"wkB/s","key":"w_kbs","groupBy":"device"}]',
+  y_label='kB/s'
+) }}
+
+{{ explainer('Como ler estas métricas', [
+  ('%util',     'Percentual do tempo em que o device esteve com pelo menos uma requisição em andamento. Próximo de 100% indica saturação. Em SSDs/NVMe modernos com paralelismo alto, %util pode chegar a 100% sem o device estar realmente saturado — combine com <code>aqu-sz</code> e latência (<code>await</code>).'),
+  ('r/s · w/s', 'IOPS de leitura e escrita por segundo (operações terminadas).'),
+  ('rkB/s · wkB/s', 'Throughput em kilobytes por segundo. Multiplique por 1024 para bytes.'),
+  ('r_await · w_await', 'Latência média (ms) das requisições <em>já contabilizando o tempo na fila</em>. Em discos rotacionais &lt;20 ms é saudável; em SSD &lt;1 ms; valores acima podem indicar contenção.'),
+  ('aqu-sz', 'Profundidade média da fila no device. >1 indica enfileiramento; valores altos sustentados sinalizam saturação real.'),
+]) }}
+
 <section class="panel">
-  <h3>iostat — atividade por device <small>(amostra de {{ data.interval }}s)</small></h3>
+  <h3>iostat — amostra atual <small>(janela de {{ data.interval }}s)</small></h3>
   {% if data.all_devices and data.all_devices|length > 1 %}
   <form method="get" class="device-filter">
     <span class="filter-label">Devices:</span>

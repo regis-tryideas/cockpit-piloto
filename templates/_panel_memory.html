@@ -1,8 +1,28 @@
 {% extends "dashboard.html" %}
+{% from "_history.html" import history_block, explainer %}
 {% block panel %}
 {% if data.error %}
   <div class="alert">{{ data.error }}</div>
 {% else %}
+
+{{ history_block(
+  'mem-used-chart',
+  'Uso de RAM e Swap',
+  'mem',
+  '[
+    {"label":"RAM %","key":"used_pct","color":"#58a6ff"},
+    {"label":"Swap %","key":"swap_pct","color":"#f0883e"}
+  ]',
+  y_max=100, y_label='%'
+) }}
+
+{{ explainer('Como ler estas métricas', [
+  ('MemAvailable',   'Estimativa de quanto a aplicação pode alocar <em>sem</em> entrar em swap, considerando o que o kernel pode liberar de cache. É a métrica mais fiel para "memória livre real" no Linux moderno.'),
+  ('Buffers / Cached', 'Páginas usadas pelo kernel para acelerar I/O. Não é "vazamento" — é cache reaproveitável; será descartado quando processos pedirem memória.'),
+  ('Dirty / Writeback', 'Bytes modificados ainda não persistidos em disco (Dirty) e atualmente sendo persistidos (Writeback). Picos altos podem indicar throttling de I/O.'),
+  ('Swap em uso',    'Pode ser benigno: kernel pode ter movido páginas raramente acessadas. Combine com <code>swapin/out</code> em vmstat para ver atividade real.'),
+  ('Slab',           'Memória usada por estruturas internas do kernel (inode/dentry caches etc).'),
+]) }}
 {% set ram = data.ram_kb %}
 {% set swap = data.swap_kb %}
 <section class="panel summary-cards">

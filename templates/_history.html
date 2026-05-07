@@ -1,0 +1,143 @@
+{# Macro: bloco de histórico com seletor de janela e canvas Chart.js.
+   Uso: {% from "_history.html" import history_block %}
+        {{ history_block('disk', 'Histórico (%util por device)', 'disk-chart', series_config) }}
+
+   series_config é um dict com:
+     - resource: chave em VALID_HISTORY_RESOURCES (cpu/mem/disk/net/psi/zfs_pool/zfs_arc)
+     - series: lista de séries [{label, key, color, group_by(opcional)}]
+     - y_max (opcional): valor máximo do eixo Y
+     - y_label (opcional): label do eixo Y
+#}
+
+{% macro history_block(slot_id, title, resource, series_json, y_max=None, y_label=None) %}
+<section class="panel">
+  <div class="hist-header">
+    <h3>{{ title }} <small>(últimas 72h máx)</small></h3>
+    <div class="window-picker" data-target="{{ slot_id }}">
+      <button data-window="1h">1h</button>
+      <button data-window="6h" class="active">6h</button>
+      <button data-window="24h">24h</button>
+      <button data-window="72h">72h</button>
+    </div>
+  </div>
+  <div class="chart-wrap">
+    <canvas id="{{ slot_id }}"></canvas>
+  </div>
+  <script type="application/json" id="{{ slot_id }}-cfg">
+    {"resource": "{{ resource }}", "series": {{ series_json|safe }}{% if y_max %}, "yMax": {{ y_max }}{% endif %}{% if y_label %}, "yLabel": "{{ y_label }}"{% endif %} }
+  </script>
+  <script>
+    (function(){
+      const id = "{{ slot_id }}";
+      const cfg = JSON.parse(document.getElementById(id + "-cfg").textContent);
+      const canvas = document.getElementById(id);
+      const ctx = canvas.getContext("2d");
+      let chart = null;
+
+      async function load(window){
+        const r = await fetch(`/api/history/${cfg.resource}?window=${window}`,
+                              { credentials: "same-origin" });
+        if (!r.ok) return;
+        const data = await r.json();
+        const rows = data.rows || [];
+
+        // Group by series
+        const byKey = {};
+        cfg.series.forEach(s => byKey[s.label] = []);
+
+        if (cfg.series[0].groupBy) {
+          // multi-instance (disk per device, net per iface, etc)
+          const gKey = cfg.series[0].groupBy;
+          const valKey = cfg.series[0].key;
+          const groups = {};
+          rows.forEach(r => {
+            const g = r[gKey];
+            if (!groups[g]) groups[g] = [];
+            groups[g].push({ x: r.ts * 1000, y: r[valKey] });
+          });
+          const palette = ["#58a6ff", "#3fb950", "#f0883e", "#a371f7",
+                           "#f85149", "#d29922", "#bc8cff", "#56d4dd"];
+          const datasets = Object.keys(groups).map((g, i) => ({
+            label: g,
+            data: groups[g],
+            borderColor: palette[i % palette.length],
+            backgroundColor: palette[i % palette.length] + "33",
+            tension: 0.2,
+            pointRadius: 0,
+            borderWidth: 1.5,
+          }));
+          render(datasets);
+        } else {
+          const datasets = cfg.series.map(s => ({
+            label: s.label,
+            data: rows.map(r => ({ x: r.ts * 1000, y: r[s.key] })),
+            borderColor: s.color,
+            backgroundColor: s.color + "33",
+            tension: 0.2,
+            pointRadius: 0,
+            borderWidth: 1.5,
+          }));
+          render(datasets);
+        }
+      }
+
+      function render(datasets){
+        if (chart) chart.destroy();
+        chart = new Chart(ctx, {
+          type: "line",
+          data: { datasets },
+          options: {
+            animation: false,
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            plugins: {
+              legend: { labels: { color: "#c9d1d9", boxWidth: 12 } },
+              tooltip: { mode: "index", intersect: false },
+            },
+            scales: {
+              x: {
+                type: "time",
+                time: { tooltipFormat: "yyyy-MM-dd HH:mm:ss" },
+                ticks: { color: "#8b949e", maxRotation: 0, autoSkip: true },
+                grid: { color: "#21262d" },
+              },
+              y: Object.assign(
+                {
+                  ticks: { color: "#8b949e" },
+                  grid: { color: "#21262d" },
+                },
+                cfg.yMax !== undefined ? { max: cfg.yMax } : {},
+                cfg.yLabel ? { title: { display: true, text: cfg.yLabel, color: "#8b949e" } } : {}
+              ),
+            },
+          },
+        });
+      }
+
+      // Bind window picker
+      const picker = document.querySelector(`.window-picker[data-target="${id}"]`);
+      picker.addEventListener("click", e => {
+        if (e.target.tagName !== "BUTTON") return;
+        picker.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+        e.target.classList.add("active");
+        load(e.target.dataset.window);
+      });
+
+      load("6h");
+    })();
+  </script>
+</section>
+{% endmacro %}
+
+{% macro explainer(title, items) %}
+<details class="explainer">
+  <summary>{{ title }}</summary>
+  <dl>
+  {% for term, desc in items %}
+    <dt>{{ term }}</dt>
+    <dd>{{ desc|safe }}</dd>
+  {% endfor %}
+  </dl>
+</details>
+{% endmacro %}

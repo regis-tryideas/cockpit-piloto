@@ -387,3 +387,80 @@ tbody tr:hover { background: #1c2128; }
   font-size: 13px;
   color: #c9d1d9;
 }
+
+/* History block */
+.hist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hist-header h3 { margin: 0; }
+.window-picker {
+  display: inline-flex;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0d1117;
+}
+.window-picker button {
+  padding: 4px 12px;
+  border: 0;
+  background: transparent;
+  color: #c9d1d9;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  border-right: 1px solid #30363d;
+}
+.window-picker button:last-child { border-right: 0; }
+.window-picker button:hover { background: #21262d; }
+.window-picker button.active { background: #1f6feb; color: #fff; }
+.chart-wrap {
+  position: relative;
+  height: 240px;
+  width: 100%;
+}
+
+/* Explainer (collapsible "como ler") */
+.explainer {
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  padding: 8px 14px;
+  margin-bottom: 16px;
+  color: #c9d1d9;
+}
+.explainer summary {
+  cursor: pointer;
+  color: #58a6ff;
+  font-size: 13px;
+  padding: 4px 0;
+  user-select: none;
+}
+.explainer summary::marker { color: #6e7681; }
+.explainer[open] summary { font-weight: 600; }
+.explainer dl {
+  margin: 8px 0 4px;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  font-size: 13px;
+}
+.explainer dt {
+  font-weight: 600;
+  color: #f0f6fc;
+  white-space: nowrap;
+}
+.explainer dd {
+  margin: 0;
+  color: #c9d1d9;
+}
+.explainer code {
+  background: #21262d;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}

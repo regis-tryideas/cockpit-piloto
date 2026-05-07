@@ -3,11 +3,12 @@ import secrets
 from functools import wraps
 
 from flask import (
-    Flask, abort, g, make_response, redirect, render_template, request,
-    url_for,
+    Flask, abort, g, jsonify, make_response, redirect, render_template,
+    request, url_for,
 )
 
 from auth import authenticate
+import sampler
 from collectors import cpu as cpu_col
 from collectors import disk as disk_col
 from collectors import logical_disk as ldisk_col
@@ -215,6 +216,36 @@ def _interval() -> int:
     return max(1, min(v, 5))
 
 
+VALID_HISTORY_RESOURCES = {
+    "cpu": "metrics_cpu",
+    "mem": "metrics_mem",
+    "disk": "metrics_disk",
+    "net": "metrics_net",
+    "psi": "metrics_psi",
+    "zfs_pool": "metrics_zfs_pool",
+    "zfs_arc": "metrics_zfs_arc",
+}
+
+WINDOW_PRESETS = {
+    "1h":  3600,
+    "6h":  6 * 3600,
+    "24h": 24 * 3600,
+    "72h": 72 * 3600,
+}
+
+
+@app.get("/api/history/<resource>")
+@login_required
+def api_history(resource):
+    table = VALID_HISTORY_RESOURCES.get(resource)
+    if not table:
+        abort(404)
+    window = request.args.get("window", "6h")
+    seconds = WINDOW_PRESETS.get(window, 6 * 3600)
+    rows = db.fetch_history(table, seconds)
+    return jsonify({"resource": resource, "window": window, "rows": rows})
+
+
 @app.errorhandler(404)
 def not_found(_):
     return ("Página não encontrada", 404)
@@ -223,9 +254,11 @@ def not_found(_):
 def main():
     db.init()
     db.purge_expired_sessions()
+    db.purge_history()
+    sampler.start()
     host = os.environ.get("COCKPIT_HOST", "0.0.0.0")
     port = int(os.environ.get("COCKPIT_PORT", "6969"))
-    app.run(host=host, port=port, debug=False)
+    app.run(host=host, port=port, debug=False, use_reloader=False)
 
 
 if __name__ == "__main__":
