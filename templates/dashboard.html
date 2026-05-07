@@ -1,10 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Cockpit · {{ heading }}{% endblock %}
+{% block title %}{{ version_info.name }} · {{ heading }}{% endblock %}
 {% block body %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <header class="topbar">
-  <div class="brand">Cockpit</div>
+  <div class="brand">
+    <span class="brand-name">{{ version_info.name }}</span>
+    <span class="brand-version" title="{{ version_info.sha or '' }}{% if version_info.branch %} · {{ version_info.branch }}{% endif %}{% if version_info.dirty %} · dirty{% endif %}">
+      {{ version_info.label }}
+    </span>
+  </div>
   <nav class="tabs">
     <a class="{% if tab=='dashboard' %}active{% endif %}" href="{{ url_for('view_dashboard') }}">Dashboard</a>
     <a class="{% if tab=='disk' %}active{% endif %}" href="{{ url_for('view_disk') }}">Disco</a>

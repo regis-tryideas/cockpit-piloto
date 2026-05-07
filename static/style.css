@@ -36,6 +36,16 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   margin: 0 0 20px;
   color: #8b949e;
   font-size: 13px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.login-card .login-version {
+  font-size: 11px;
+  color: #6e7681;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .login-card label {
   display: block;
@@ -100,8 +110,22 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   z-index: 10;
 }
 .topbar .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.topbar .brand-name {
   font-weight: 700;
-  letter-spacing: .5px;
+  letter-spacing: .3px;
+}
+.topbar .brand-version {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #6e7681;
+  padding: 1px 6px;
+  border: 1px solid #21262d;
+  border-radius: 10px;
+  cursor: help;
 }
 .topbar .tabs {
   display: flex;

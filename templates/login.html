@@ -1,10 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Cockpit · Login{% endblock %}
+{% block title %}{{ version_info.name }} · Login{% endblock %}
 {% block body %}
 <div class="login-wrap">
   <form method="post" action="{{ url_for('login') }}" class="login-card">
-    <h1>Cockpit</h1>
-    <p class="subtitle">Monitor de recursos da máquina</p>
+    <h1>{{ version_info.name }}</h1>
+    <p class="subtitle">
+      Monitor de recursos da máquina
+      <span class="login-version">{{ version_info.label }}{% if version_info.sha %} · <span class="mono">{{ version_info.sha }}</span>{% endif %}</span>
+    </p>
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
     <label>
       <span>Usuário</span>

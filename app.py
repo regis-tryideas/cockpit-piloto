@@ -9,6 +9,7 @@ from flask import (
 
 from auth import authenticate
 import sampler
+import version
 from collectors import cpu as cpu_col
 from collectors import disk as disk_col
 from collectors import logical_disk as ldisk_col
@@ -43,7 +44,10 @@ def load_session():
 
 @app.context_processor
 def inject_globals():
-    return {"pve_detected": PVE_DETECTED}
+    return {
+        "pve_detected": PVE_DETECTED,
+        "version_info": version.info(),
+    }
 
 
 def login_required(view):
