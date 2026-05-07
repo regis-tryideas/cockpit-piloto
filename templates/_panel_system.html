@@ -1,0 +1,210 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import history_block, explainer %}
+{% block panel %}
+
+{# ---------- Cards de overview ---------- #}
+<section class="summary-cards">
+  <div class="card">
+    <div class="card-label">Hostname</div>
+    <div class="card-value small mono">{{ data.info.hostname }}</div>
+    <div class="card-foot mono">{{ data.info.fqdn }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Sistema</div>
+    <div class="card-value small">{{ data.info.distro.pretty_name or '—' }}</div>
+    <div class="card-foot mono">kernel {{ data.info.kernel }}</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Uptime</div>
+    {% set days = data.info.uptime_s // 86400 %}
+    {% set hours = (data.info.uptime_s % 86400) // 3600 %}
+    {% set mins = (data.info.uptime_s % 3600) // 60 %}
+    <div class="card-value">{{ days }}d {{ hours }}h {{ mins }}m</div>
+    <div class="card-foot">{{ data.info.arch }} · {{ data.info.physical_cpus }}/{{ data.info.logical_cpus }} cores (físicos/lógicos)</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Processos</div>
+    <div class="card-value">{{ data.states.total }}</div>
+    <div class="card-foot">{{ data.states.threads }} threads</div>
+  </div>
+  {% if data.fds %}
+  <div class="card">
+    <div class="card-label">File descriptors</div>
+    <div class="card-value">{{ data.fds.used_pct }}%</div>
+    <div class="card-foot">{{ '{:,}'.format(data.fds.allocated) }} de {{ '{:,}'.format(data.fds.max) }}</div>
+  </div>
+  {% endif %}
+  {% if data.users %}
+  <div class="card">
+    <div class="card-label">Usuários logados</div>
+    <div class="card-value">{{ data.users|length }}</div>
+    <div class="card-foot">
+      {% for u in data.users[:3] %}{{ u.name }}{% if not loop.last %}, {% endif %}{% endfor %}
+      {% if data.users|length > 3 %} …{% endif %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- Estados ---------- #}
+<section class="panel">
+  <h3>Estados de processos <small>(snapshot atual)</small></h3>
+  <div class="proc-states">
+    <div class="ps-item">
+      <div class="ps-num">{{ data.states.running }}</div>
+      <div class="ps-lab"><span class="badge ok">R</span> running</div>
+    </div>
+    <div class="ps-item">
+      <div class="ps-num">{{ data.states.sleeping }}</div>
+      <div class="ps-lab"><span class="badge">S</span> sleeping</div>
+    </div>
+    <div class="ps-item">
+      <div class="ps-num {% if data.states.disk_sleep > 5 %}warn-text{% endif %}">{{ data.states.disk_sleep }}</div>
+      <div class="ps-lab"><span class="badge warn-bg">D</span> disk wait</div>
+    </div>
+    <div class="ps-item">
+      <div class="ps-num {% if data.states.zombie > 0 %}warn-text{% endif %}">{{ data.states.zombie }}</div>
+      <div class="ps-lab"><span class="badge {% if data.states.zombie %}critical-bg{% endif %}">Z</span> zombie</div>
+    </div>
+    <div class="ps-item">
+      <div class="ps-num">{{ data.states.stopped }}</div>
+      <div class="ps-lab"><span class="badge">T</span> stopped</div>
+    </div>
+    <div class="ps-item">
+      <div class="ps-num">{{ data.states.idle }}</div>
+      <div class="ps-lab"><span class="badge">I</span> idle (kernel)</div>
+    </div>
+  </div>
+</section>
+
+{# ---------- Histórico ---------- #}
+{{ history_block(
+  'procs-chart',
+  'Estados de processos ao longo do tempo',
+  'procs',
+  '[
+    {"label":"running","key":"running","color":"#3fb950"},
+    {"label":"disk wait","key":"disk_sleep","color":"#f0883e"},
+    {"label":"zombies","key":"zombie","color":"#f85149"},
+    {"label":"total","key":"total","color":"#58a6ff"}
+  ]',
+  y_label='count'
+) }}
+
+{{ history_block(
+  'fd-chart',
+  'File descriptors em uso',
+  'procs',
+  '[{"label":"FDs alocados","key":"fd_allocated","color":"#58a6ff"}]',
+  y_label='fds'
+) }}
+
+{# ---------- Top CPU ---------- #}
+<section class="panel">
+  <h3>Top processos por CPU <small>(% relativa, janela de 1s)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>PID</th><th>Nome</th><th>Usuário</th>
+          <th>CPU% (1 core)</th><th>CPU% (host)</th>
+          <th>RSS</th><th>%MEM</th><th>Threads</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in data.top_cpu %}
+        <tr>
+          <td>{{ p.pid }}</td>
+          <td><span class="mono">{{ p.name }}</span></td>
+          <td>{{ p.user }}</td>
+          <td>
+            <div class="bar {% if p.cpu_pct >= 100 %}critical{% elif p.cpu_pct >= 50 %}warn{% endif %}">
+              <span style="width: {{ [p.cpu_pct,100]|min }}%"></span>
+            </div>
+            <span class="bar-value">{{ p.cpu_pct }}%</span>
+          </td>
+          <td>{{ p.cpu_normalized_pct }}%</td>
+          <td>{{ (p.rss_b/1024/1024)|round(1) }} MiB</td>
+          <td>{{ p.mem_pct }}%</td>
+          <td>{{ p.num_threads }}</td>
+          <td><span class="badge">{{ p.status }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{# ---------- Top MEM ---------- #}
+<section class="panel">
+  <h3>Top processos por memória residente</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>PID</th><th>Nome</th><th>Usuário</th>
+          <th>RSS</th><th>%MEM</th><th>VMS</th>
+          <th>CPU%</th><th>Threads</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in data.top_mem %}
+        <tr>
+          <td>{{ p.pid }}</td>
+          <td><span class="mono">{{ p.name }}</span></td>
+          <td>{{ p.user }}</td>
+          <td>{{ (p.rss_b/1024/1024)|round(1) }} MiB</td>
+          <td>
+            <div class="bar {% if p.mem_pct >= 25 %}warn{% endif %}">
+              <span style="width: {{ [p.mem_pct,100]|min }}%"></span>
+            </div>
+            <span class="bar-value">{{ p.mem_pct }}%</span>
+          </td>
+          <td>{{ (p.vms_b/1024/1024)|round(1) }} MiB</td>
+          <td>{{ p.cpu_pct }}%</td>
+          <td>{{ p.num_threads }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{# ---------- Usuários ---------- #}
+{% if data.users %}
+<section class="panel">
+  <h3>Sessões ativas</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Usuário</th><th>TTY</th><th>Origem</th><th>Início</th></tr>
+      </thead>
+      <tbody>
+        {% for u in data.users %}
+        <tr>
+          <td><strong>{{ u.name }}</strong></td>
+          <td><span class="mono">{{ u.terminal }}</span></td>
+          <td>{{ u.host or '(local)' }}</td>
+          <td><span class="mono">{{ u.started_ts }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{{ explainer('Como ler estas métricas', [
+  ('R · running',   'Processos prontos ou rodando no scheduler. Quando &gt; nº de cores em janelas longas, indica saturação de CPU.'),
+  ('S · sleeping',  'Aguardando algum evento (timer, IO interruptível, signal). É o estado da maioria dos processos saudáveis.'),
+  ('D · disk wait', 'Sleep <em>uninterruptible</em> — geralmente bloqueado em I/O de disco. Picos sustentados indicam gargalo no storage.'),
+  ('Z · zombie',    'Processo já terminou mas o pai ainda não fez <code>wait()</code>. Quantidade pequena é normal; crescimento contínuo aponta bug no processo pai.'),
+  ('T · stopped',   'Processo suspenso (ex: SIGSTOP, debugger).'),
+  ('I · idle',      'Estado novo do kernel (4.x+) para kthreads ociosas — não conta para load average.'),
+  ('CPU% (1 core)', 'Métrica relativa a um core: pode ultrapassar 100% se o processo é multi-thread. Útil pra identificar processos pesados.'),
+  ('CPU% (host)',   'Mesma medida, mas dividida pelo total de cores. 100% aqui = saturação total da máquina.'),
+  ('RSS',           'Resident Set Size — memória física realmente alocada para o processo, sem páginas em swap.'),
+  ('VMS',           'Virtual Memory Size — todo o espaço de endereçamento do processo (inclui mmap/lazy). Sempre maior que RSS; valor alto sozinho não é problema.'),
+  ('FDs',           '<em>File descriptors</em> abertos no kernel. Quando se aproximar do <code>fs.file-max</code>, processos novos param de abrir arquivos/sockets.'),
+]) }}
+{% endblock %}

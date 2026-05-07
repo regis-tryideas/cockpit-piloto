@@ -1,0 +1,160 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import explainer %}
+{% block panel %}
+{% if data.error %}
+<section class="panel">
+  <h3>NUMA indisponível</h3>
+  <p class="hint-inline">{{ data.error }}</p>
+</section>
+{% else %}
+
+<section class="summary-cards">
+  <div class="card">
+    <div class="card-label">Nós NUMA</div>
+    <div class="card-value">{{ data.node_count }}</div>
+    <div class="card-foot">
+      {% if data.is_uma %}
+        UMA — sem penalidade de acesso entre nós
+      {% else %}
+        sistema multi-socket / NUMA real
+      {% endif %}
+    </div>
+  </div>
+  {% set total_mem = data.nodes|sum(attribute='mem_total_kb') %}
+  <div class="card">
+    <div class="card-label">Memória total</div>
+    <div class="card-value">{{ (total_mem/1024/1024)|round(2) }} GiB</div>
+    <div class="card-foot">somatório dos nós</div>
+  </div>
+  {% set total_cpus = data.nodes|sum(attribute='cpu_count') %}
+  <div class="card">
+    <div class="card-label">CPUs totais</div>
+    <div class="card-value">{{ total_cpus }}</div>
+    <div class="card-foot">distribuídas entre {{ data.node_count }} nó(s)</div>
+  </div>
+</section>
+
+{# ---------- Matriz de distância ---------- #}
+{% if data.nodes|length > 1 %}
+<section class="panel">
+  <h3>Matriz de distância NUMA <small>(custo relativo de acesso entre nós)</small></h3>
+  <div class="table-wrap">
+    <table class="distance-matrix">
+      <thead>
+        <tr>
+          <th></th>
+          {% for n in data.nodes %}<th>node{{ n.id }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for n in data.nodes %}
+        <tr>
+          <th>node{{ n.id }}</th>
+          {% for d in n.distance %}
+          <td class="{% if d == 10 %}distance-local{% elif d > 20 %}distance-far{% else %}distance-near{% endif %}">{{ d }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="hint-inline">
+    O kernel usa <code>10</code> como custo de acesso local; valores maiores
+    indicam que o acesso àquele nó é mais lento. Aplicações sensíveis
+    (DBs, hypervisors) se beneficiam de afinidade ao nó local.
+  </p>
+</section>
+{% endif %}
+
+{# ---------- Cards por nó ---------- #}
+{% for n in data.nodes %}
+<section class="panel">
+  <h3>node{{ n.id }} <small>{{ n.cpu_count }} CPUs · {{ (n.mem_total_kb/1024/1024)|round(2) }} GiB</small></h3>
+
+  <div class="numa-grid">
+    <div>
+      <div class="kv-label">CPUs (cpulist)</div>
+      <div class="kv-value mono">{{ n.cpu_list_raw }}</div>
+    </div>
+    <div>
+      <div class="kv-label">Memória usada</div>
+      <div class="kv-value">
+        {{ (n.mem_used_kb/1024/1024)|round(2) }} / {{ (n.mem_total_kb/1024/1024)|round(2) }} GiB
+        <span class="bar-value">({{ n.mem_used_pct }}%)</span>
+      </div>
+      <div class="bar {% if n.mem_used_pct >= 90 %}critical{% elif n.mem_used_pct >= 75 %}warn{% endif %} bar-wide">
+        <span style="width: {{ [n.mem_used_pct,100]|min }}%"></span>
+      </div>
+    </div>
+    <div>
+      <div class="kv-label">Active / Inactive</div>
+      <div class="kv-value">
+        {{ (n.active_kb/1024)|round(0) }} MiB / {{ (n.inactive_kb/1024)|round(0) }} MiB
+      </div>
+    </div>
+    <div>
+      <div class="kv-label">FilePages / Anon / Shmem</div>
+      <div class="kv-value">
+        {{ (n.filepages_kb/1024)|round(0) }} / {{ (n.anonpages_kb/1024)|round(0) }} / {{ (n.shmem_kb/1024)|round(0) }} MiB
+      </div>
+    </div>
+  </div>
+
+  {% if n.hugepages %}
+  <h4>Hugepages</h4>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Tamanho</th><th>Reservadas</th><th>Livres</th><th>Em uso</th></tr>
+      </thead>
+      <tbody>
+        {% for hp in n.hugepages %}
+        <tr>
+          <td><span class="mono">{{ hp.size }}</span></td>
+          <td>{{ hp.nr }}</td>
+          <td>{{ hp.free }}</td>
+          <td>{{ hp.nr - hp.free }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <h4>Dispositivos ligados ao nó</h4>
+  <div class="numa-devs">
+    <div>
+      <div class="kv-label">Network</div>
+      <div class="kv-value mono">
+        {% if n.devices.net %}{{ n.devices.net|join(', ') }}{% else %}—{% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="kv-label">Block</div>
+      <div class="kv-value mono">
+        {% if n.devices.block %}{{ n.devices.block|join(', ') }}{% else %}—{% endif %}
+      </div>
+    </div>
+    <div>
+      <div class="kv-label">PCI por classe</div>
+      <div class="kv-value">
+        {% if n.devices.pci %}
+          {% for p in n.devices.pci %}{{ p.class }} ({{ p.count }}){% if not loop.last %} · {% endif %}{% endfor %}
+        {% else %}—{% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+{% endfor %}
+
+{{ explainer('Como ler estas métricas', [
+  ('NUMA',          'Non-Uniform Memory Access. Em sistemas multi-socket, cada CPU tem memória "local" mais rápida e memória "remota" mais lenta. UMA = sistema com 1 nó (sem penalidade).'),
+  ('cpulist',       'Quais CPUs lógicas (cores/threads) pertencem a este nó. Útil para fazer pinning com <code>taskset</code> ou <code>numactl --cpunodebind=N</code>.'),
+  ('Distância',     'Custo relativo de acesso. <strong>10</strong> = local; <strong>20–30</strong> = nó adjacente (1 hop); &gt;30 = caminho mais longo. Workloads sensíveis (DBs, KVM) devem ficar pinned no nó local.'),
+  ('Active/Inactive','Páginas que o kernel considera quentes (Active) vs candidatas a evict (Inactive).'),
+  ('FilePages',     'Páginas backed por arquivo (mmap, page cache). AnonPages = páginas anônimas (heap, stack, anon mmap). Shmem = memória compartilhada / tmpfs.'),
+  ('Hugepages',     'Páginas de tamanho maior que 4kB (geralmente 2MB ou 1GB). Reduzem pressão na TLB. Reservadas por nó garantem que estarão localmente.'),
+  ('Dispositivos por nó','Cada NIC/disco PCI tem afinidade a um nó NUMA (mais próximo do socket). Aplicações que fazem muito I/O ganham com afinidade ao mesmo nó do device.'),
+]) }}
+{% endif %}
+{% endblock %}

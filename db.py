@@ -104,6 +104,14 @@ def init():
                 l2_hit_ratio REAL
             );
 
+            CREATE TABLE IF NOT EXISTS metrics_procs (
+                ts INTEGER PRIMARY KEY,
+                total INTEGER, threads INTEGER,
+                running INTEGER, sleeping INTEGER, disk_sleep INTEGER,
+                zombie INTEGER, stopped INTEGER, idle INTEGER,
+                fd_allocated INTEGER, fd_used_pct REAL
+            );
+
             CREATE TABLE IF NOT EXISTS metrics_pve_vm (
                 ts INTEGER NOT NULL,
                 vmid INTEGER NOT NULL,
@@ -182,7 +190,7 @@ def recent_failed_attempts(remote_addr: str, window_seconds: int = 300) -> int:
 HISTORY_TABLES = (
     "metrics_cpu", "metrics_mem", "metrics_disk", "metrics_net",
     "metrics_psi", "metrics_zfs_pool", "metrics_zfs_arc",
-    "metrics_pve_vm",
+    "metrics_pve_vm", "metrics_procs",
 )
 
 

@@ -10,6 +10,7 @@ from collectors import memory as mem_col
 from collectors import network as net_col
 from collectors import pressure as psi_col
 from collectors import proxmox as pve_col
+from collectors import system as system_col
 from collectors import zfs as zfs_col
 
 log = logging.getLogger("cockpit.sampler")
@@ -159,6 +160,26 @@ def _sample_once(ts: int):
             }])
 
 
+def _sample_procs(ts: int):
+    states = _safe(system_col.process_states) or {}
+    fds = _safe(system_col.fd_stats) or {}
+    if not states:
+        return
+    db.insert_many("metrics_procs", [{
+        "ts": ts,
+        "total": states.get("total"),
+        "threads": states.get("threads"),
+        "running": states.get("running"),
+        "sleeping": states.get("sleeping"),
+        "disk_sleep": states.get("disk_sleep"),
+        "zombie": states.get("zombie"),
+        "stopped": states.get("stopped"),
+        "idle": states.get("idle"),
+        "fd_allocated": fds.get("allocated"),
+        "fd_used_pct": fds.get("used_pct"),
+    }])
+
+
 def _sample_pve(ts: int):
     pve = _safe(pve_col.collect) or {}
     if pve.get("error") or not pve.get("vms"):
@@ -183,6 +204,7 @@ def _loop():
         ts = int(time.time())
         try:
             _sample_once(ts)
+            _sample_procs(ts)
             _sample_pve(ts)
         except Exception as e:
             log.exception("sampling falhou: %s", e)

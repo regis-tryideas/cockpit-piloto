@@ -14,8 +14,10 @@ from collectors import disk as disk_col
 from collectors import logical_disk as ldisk_col
 from collectors import memory as mem_col
 from collectors import network as net_col
+from collectors import numa as numa_col
 from collectors import pressure as psi_col
 from collectors import proxmox as pve_col
+from collectors import system as system_col
 from collectors import zfs as zfs_col
 import db
 
@@ -161,6 +163,32 @@ def view_logical_disk():
     )
 
 
+@app.get("/system")
+@login_required
+def view_system():
+    data = system_col.collect(top_limit=20)
+    return render_template(
+        "_panel_system.html",
+        tab="system",
+        heading="Sistema",
+        username=g.session["username"],
+        data=data,
+    )
+
+
+@app.get("/numa")
+@login_required
+def view_numa():
+    data = numa_col.collect()
+    return render_template(
+        "_panel_numa.html",
+        tab="numa",
+        heading="NUMA",
+        username=g.session["username"],
+        data=data,
+    )
+
+
 @app.get("/proxmox")
 @login_required
 def view_proxmox():
@@ -247,6 +275,7 @@ VALID_HISTORY_RESOURCES = {
     "zfs_pool": "metrics_zfs_pool",
     "zfs_arc": "metrics_zfs_arc",
     "pve_vm": "metrics_pve_vm",
+    "procs": "metrics_procs",
 }
 
 WINDOW_PRESETS = {

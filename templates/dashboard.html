@@ -16,6 +16,8 @@
     <a class="{% if tab=='cpu' %}active{% endif %}" href="{{ url_for('view_cpu') }}">CPU</a>
     <a class="{% if tab=='memory' %}active{% endif %}" href="{{ url_for('view_memory') }}">Memória</a>
     <a class="{% if tab=='network' %}active{% endif %}" href="{{ url_for('view_network') }}">Rede</a>
+    <a class="{% if tab=='system' %}active{% endif %}" href="{{ url_for('view_system') }}">Sistema</a>
+    <a class="{% if tab=='numa' %}active{% endif %}" href="{{ url_for('view_numa') }}">NUMA</a>
   </nav>
   <div class="user">
     <span>{{ username }}</span>
