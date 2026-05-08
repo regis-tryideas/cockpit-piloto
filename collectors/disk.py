@@ -1,9 +1,16 @@
 import json
+import re
 import subprocess
 
 from . import logical_disk
 
-PHYSICAL_PREFIXES = ("nvme", "sd", "vd", "hd", "xvd")
+# Aceita apenas nomes "canônicos" de discos físicos:
+# - sd[a-z]   (sda..sdz, mas NÃO sdaa, sdab, sdaz — esses são driver junk)
+# - vd[a-z]   (vda..vdz)
+# - hd[a-z]   (hda..hdz)
+# - xvd[a-z]  (xvda..xvdz)
+# - nvmeNnM   (namespace NVMe, ex: nvme0n1)
+PHYSICAL_RE = re.compile(r"^(?:nvme\d+n\d+|sd[a-z]|vd[a-z]|hd[a-z]|xvd[a-z])$")
 HIDDEN_PREFIXES = ("dm-", "zd", "md", "loop", "ram", "sr")
 
 
@@ -12,7 +19,7 @@ def _is_physical(name: str) -> bool:
         return False
     if name.startswith(HIDDEN_PREFIXES):
         return False
-    return name.startswith(PHYSICAL_PREFIXES)
+    return bool(PHYSICAL_RE.match(name))
 
 
 def list_devices() -> list[str]:

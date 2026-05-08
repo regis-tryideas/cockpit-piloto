@@ -202,17 +202,27 @@ def purge_history(retention_seconds: int = HISTORY_RETENTION_SECONDS):
 
 
 def purge_non_physical_disks():
-    """Remove devices não-físicos (dm-*, zd*, md*, loop*, etc.) do histórico.
+    """Remove devices não-físicos do histórico de metrics_disk.
 
-    Usado em migrações para limpar amostras antigas após mudança no filtro
-    do coletor.
+    Usa o filtro canônico de collectors.disk._is_physical, então também
+    remove nomes como sdaa/sdab/sdac que aparecem em alguns drivers e
+    não são discos reais válidos.
     """
+    try:
+        from collectors.disk import _is_physical
+    except ImportError:
+        return
     with connect() as conn:
-        conn.execute(
-            "DELETE FROM metrics_disk WHERE "
-            "device LIKE 'dm-%' OR device LIKE 'zd%' OR device LIKE 'md%' "
-            "OR device LIKE 'loop%' OR device LIKE 'ram%' OR device LIKE 'sr%'"
-        )
+        rows = conn.execute(
+            "SELECT DISTINCT device FROM metrics_disk"
+        ).fetchall()
+        invalid = [r["device"] for r in rows if not _is_physical(r["device"])]
+        if invalid:
+            placeholders = ",".join("?" * len(invalid))
+            conn.execute(
+                f"DELETE FROM metrics_disk WHERE device IN ({placeholders})",
+                invalid,
+            )
 
 
 def fetch_history(table: str, window_seconds: int,
