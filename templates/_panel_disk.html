@@ -39,6 +39,149 @@
   y_label='kB/s'
 ) }}
 
+{# ---------- Saúde SMART ---------- #}
+{% if data.smart %}
+<section class="panel">
+  <h3>Saúde dos discos (SMART)
+    <small>
+      {% if data.smart.available %}
+        {{ data.smart.disks|length }} dispositivos · ✓ {{ data.smart.ok_count }} ·
+        ✗ {{ data.smart.fail_count }} · ? {{ data.smart.unknown_count }}
+      {% else %}
+        {{ data.smart.error }}
+      {% endif %}
+    </small>
+  </h3>
+
+  {% if not data.smart.available %}
+    <p class="hint-inline">{{ data.smart.error }}</p>
+  {% elif not data.smart.disks %}
+    <p class="hint-inline">Nenhum disco físico encontrado para consulta SMART.</p>
+  {% else %}
+  <div class="smart-grid">
+    {% for s in data.smart.disks %}
+    <div class="smart-card">
+      <div class="smart-head">
+        <h4>
+          <span class="mono">{{ s.device }}</span>
+          {% if s.passed is sameas true %}
+            <span class="badge ok" data-tip="O disco respondeu ao comando SMART overall-health = PASSED">PASSED</span>
+          {% elif s.passed is sameas false %}
+            <span class="badge critical-bg" data-tip="O firmware do disco reportou FAILED — substitua o quanto antes!">FAILED</span>
+          {% else %}
+            <span class="badge" data-tip="SMART não disponível ou device virtualizado">unknown</span>
+          {% endif %}
+          {% if s.is_nvme %}<span class="badge transport">NVMe</span>
+          {% elif s.is_ssd %}<span class="badge">SSD</span>
+          {% elif s.rotation_rate %}<span class="badge">{{ s.rotation_rate }} RPM</span>
+          {% endif %}
+        </h4>
+      </div>
+
+      {% if s.error %}
+        <p class="hint-inline warn-text">{{ s.error }}</p>
+      {% else %}
+      <div class="smart-info">
+        <div>
+          <div class="kv-label" data-tip="Modelo do dispositivo, conforme reportado pelo firmware">Modelo</div>
+          <div class="kv-value mono">{{ s.model or '—' }}</div>
+        </div>
+        <div>
+          <div class="kv-label">Serial</div>
+          <div class="kv-value mono">{{ s.serial or '—' }}</div>
+        </div>
+        <div>
+          <div class="kv-label" data-tip="Capacidade total bruta">Capacidade</div>
+          <div class="kv-value">{{ s.capacity_b | format_bytes }}</div>
+        </div>
+        <div>
+          <div class="kv-label" data-tip="Power-On Hours: tempo acumulado de uso. Discos rotacionais expectativa de vida ~5 anos (43800h); SSD/NVMe não envelhecem por POH.">Horas de uso</div>
+          <div class="kv-value">{{ s.power_on_hours | format_hours }}</div>
+        </div>
+        <div>
+          <div class="kv-label" data-tip="TBW (Total Bytes Written): total escrito ao longo da vida do drive. SSDs têm endurance medida em TBW — quanto maior, mais perto do fim da vida útil.">TBW (escritas)</div>
+          <div class="kv-value">{{ s.tbw_b | format_bytes }}</div>
+        </div>
+        {% if s.tb_read_b %}
+        <div>
+          <div class="kv-label" data-tip="Total lido. Não afeta endurance, só métrica de uso.">Total lido</div>
+          <div class="kv-value">{{ s.tb_read_b | format_bytes }}</div>
+        </div>
+        {% endif %}
+        {% if s.temperature_c is not none %}
+        <div>
+          <div class="kv-label" data-tip="Temperatura atual em °C. >55°C sustentado encurta a vida do drive.">Temperatura</div>
+          <div class="kv-value {% if s.temperature_c >= 55 %}warn-text{% endif %}">{{ s.temperature_c }} °C</div>
+        </div>
+        {% endif %}
+        {% if s.power_cycles is not none %}
+        <div>
+          <div class="kv-label" data-tip="Quantas vezes o disco foi ligado">Power cycles</div>
+          <div class="kv-value">{{ '{:,}'.format(s.power_cycles) }}</div>
+        </div>
+        {% endif %}
+        {% if s.is_nvme %}
+        <div>
+          <div class="kv-label" data-tip="NVMe wear-out: porcentagem da vida estimada já consumida (baseada em ciclos de escrita). 100% = fim da vida prevista pelo fabricante.">Wear-out</div>
+          <div class="kv-value {% if s.wear_pct_used >= 80 %}warn-text{% endif %}">{{ s.wear_pct_used }}%</div>
+        </div>
+        <div>
+          <div class="kv-label" data-tip="NVMe spare blocks reservados ainda disponíveis. Quando cai abaixo do threshold, o disco está reservando o último estoque — substituir.">Spare disponível</div>
+          <div class="kv-value {% if s.available_spare_pct < (s.available_spare_threshold_pct or 10) %}warn-text{% endif %}">
+            {{ s.available_spare_pct }}% (limite: {{ s.available_spare_threshold_pct }}%)
+          </div>
+        </div>
+        {% if s.unsafe_shutdowns is not none %}
+        <div>
+          <div class="kv-label" data-tip="Quantas vezes o drive foi desligado sem flush limpo">Shutdowns inseguros</div>
+          <div class="kv-value">{{ s.unsafe_shutdowns }}</div>
+        </div>
+        {% endif %}
+        {% endif %}
+      </div>
+
+      {# Erros #}
+      {% if s.errors %}
+      <h5>Contadores de erro</h5>
+      <table class="smart-errors">
+        <tbody>
+          {% for label, key, tip in [
+            ('Setores realocados',   'reallocated_sectors',   'Atributo 5 (SATA): setores que falharam e foram remapeados. >0 indica disco morrendo.'),
+            ('Setores pendentes',    'pending_sectors',        'Atributo 197: setores aguardando realocação na próxima escrita. >0 = pré-falha.'),
+            ('Não-corrigíveis',      'offline_uncorrectable',  'Atributo 198: setores que não puderam ser recuperados — falha confirmada.'),
+            ('Erros de UDMA/CRC',    'udma_crc_errors',        'Atributo 199: erros no canal SATA — frequentemente cabo ou conector ruim.'),
+            ('Reportados não-corr.', 'reported_uncorrect',     'Atributo 187: erros não corrigíveis reportados ao host.'),
+            ('Command timeout',      'command_timeout',         'Atributo 188: comandos que excederam o tempo limite.'),
+            ('NVMe media errors',    'media_errors',            'NVMe: leituras com erro de mídia (paridade ECC).'),
+            ('NVMe error log',       'num_err_log_entries',     'NVMe: total de entradas no log interno de erros.'),
+            ('Critical warning',     'critical_warning',        'NVMe: bitmask de alertas críticos (temperatura, spare baixo, read-only).'),
+          ] %}
+          {% set v = s.errors.get(key) %}
+          {% if v is not none %}
+          <tr>
+            <td data-tip="{{ tip }}">{{ label }}</td>
+            <td class="{% if v > 0 %}warn-text{% endif %}">{{ '{:,}'.format(v) }}</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      {% if s.warnings %}
+      <div class="alert">
+        <strong>Atenção:</strong>
+        <ul>{% for w in s.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
 {{ explainer('Como ler estas métricas', [
   ('IOPS',           'Operações de I/O por segundo. <code>r/s + w/s</code>. Métrica chave de capacidade — discos rotacionais entregam ~80–200 IOPS; SATA SSD ~10–40 mil; NVMe ~100k–1M+. Alto IOPS com latência baixa = OK. Alto IOPS com latência subindo = chegando ao limite.'),
   ('Response time (await)', 'Tempo médio (ms) que cada requisição leva, <em>já incluindo a fila</em>. Saudável: rotacional &lt;20 ms · SATA SSD &lt;5 ms · NVMe &lt;1 ms. <strong>"avg latency"</strong> nos gráficos é a média ponderada de r_await e w_await pelo IOPS de cada um.'),

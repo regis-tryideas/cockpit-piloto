@@ -776,6 +776,52 @@ tr.vm-stopped { opacity: 0.5; }
 }
 .arc-tunable-form button.secondary:hover { background: #30363d; }
 
+/* SMART */
+.smart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 14px;
+}
+.smart-card {
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.smart-card h4 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.smart-info {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 18px;
+  margin: 12px 0;
+}
+.smart-card h5 {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: #8b949e;
+}
+.smart-errors {
+  width: 100%;
+  font-size: 12px;
+}
+.smart-errors td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #21262d;
+}
+.smart-errors td:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 /* Explainer (collapsible "como ler") */
 .explainer {
   background: #0d1117;

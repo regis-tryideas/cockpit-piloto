@@ -20,6 +20,7 @@ from collectors import network as net_col
 from collectors import numa as numa_col
 from collectors import pressure as psi_col
 from collectors import proxmox as pve_col
+from collectors import smart as smart_col
 from collectors import system as system_col
 from collectors import zfs as zfs_col
 import db
@@ -43,6 +44,38 @@ def _format_ts(ts):
         return "—"
     import datetime
     return datetime.datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+@app.template_filter("format_bytes")
+def _format_bytes(b):
+    if b is None:
+        return "—"
+    try:
+        b = float(b)
+    except (TypeError, ValueError):
+        return "—"
+    if b == 0:
+        return "0 B"
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB", "PiB"):
+        if abs(b) < 1024:
+            return f"{b:.2f} {unit}" if unit != "B" else f"{int(b)} B"
+        b /= 1024
+    return f"{b:.2f} EiB"
+
+
+@app.template_filter("format_hours")
+def _format_hours(h):
+    if h is None:
+        return "—"
+    try:
+        h = int(h)
+    except (TypeError, ValueError):
+        return "—"
+    days = h // 24
+    years = days / 365.25
+    if years >= 1:
+        return f"{h:,} h ({years:.1f} anos · {days} dias)"
+    return f"{h:,} h ({days} dias)"
 
 
 @app.template_filter("format_latency_ns")
@@ -189,6 +222,7 @@ def view_disk():
     devices = request.args.getlist("device")
     devices = [d for d in devices if d]
     data = disk_col.collect(interval=interval, devices=devices or None)
+    data["smart"] = smart_col.collect()
     return render_template(
         "_panel_disk.html",
         tab="disk",
