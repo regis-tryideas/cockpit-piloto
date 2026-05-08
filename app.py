@@ -3,8 +3,8 @@ import secrets
 from functools import wraps
 
 from flask import (
-    Flask, abort, g, jsonify, make_response, redirect, render_template,
-    request, url_for,
+    Flask, abort, flash, g, get_flashed_messages, jsonify, make_response,
+    redirect, render_template, request, url_for,
 )
 
 from auth import authenticate
@@ -265,6 +265,20 @@ def view_proxmox():
         username=g.session["username"],
         data=data,
     )
+
+
+@app.post("/zfs/arc-max")
+@login_required
+def set_arc_max():
+    raw = request.form.get("gib", "").strip().replace(",", ".")
+    try:
+        gib = float(raw)
+    except ValueError:
+        flash(("error", f"Valor inválido: {raw!r}"))
+        return redirect(url_for("view_zfs"))
+    ok, msg = zfs_col.set_arc_max(gib)
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_zfs"))
 
 
 @app.get("/zfs")

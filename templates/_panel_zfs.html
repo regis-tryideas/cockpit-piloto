@@ -1,6 +1,13 @@
 {% extends "dashboard.html" %}
 {% from "_history.html" import history_block, explainer %}
 {% block panel %}
+
+{% with msgs = get_flashed_messages(with_categories=false) %}
+{% for kind, txt in msgs %}
+<div class="flash flash-{{ kind }}">{{ txt }}</div>
+{% endfor %}
+{% endwith %}
+
 {% if data.error %}
 <section class="panel">
   <h3>ZFS não está disponível neste host</h3>
@@ -149,6 +156,63 @@
   </div>
   {% endif %}
 </section>
+
+{# ---------- Tunable: ajustar ARC max ---------- #}
+{% if data.arc_tunable and data.arc_tunable.supported %}
+<section class="panel">
+  <h3>Ajustar ARC max</h3>
+  <div class="arc-tunable">
+    <div class="arc-tunable-info">
+      <div>
+        <div class="kv-label">Em runtime</div>
+        <div class="kv-value">
+          {% if data.arc_tunable.is_auto %}
+            <span class="badge">automático (kernel calcula)</span>
+          {% else %}
+            <strong>{{ data.arc_tunable.runtime_gib }} GiB</strong>
+          {% endif %}
+        </div>
+      </div>
+      <div>
+        <div class="kv-label">Persistido em <span class="mono">{{ data.arc_tunable.modprobe_conf }}</span></div>
+        <div class="kv-value">
+          {% if data.arc_tunable.persisted_gib %}
+            <strong>{{ data.arc_tunable.persisted_gib }} GiB</strong>
+          {% else %}
+            <span class="badge">não definido</span>
+          {% endif %}
+        </div>
+      </div>
+      <div>
+        <div class="kv-label">RAM total / limite seguro</div>
+        <div class="kv-value">
+          {{ data.arc_tunable.total_ram_gib }} GiB / <strong>{{ data.arc_tunable.max_safe_gib }} GiB</strong> (90%)
+        </div>
+      </div>
+    </div>
+
+    <form method="post" action="{{ url_for('set_arc_max') }}" class="arc-tunable-form"
+          onsubmit="return confirm('Aplicar ARC max = ' + this.gib.value + ' GiB? A mudança é imediata e fica persistida em modprobe.d.');">
+      <label>
+        <span class="filter-label">Novo valor (GiB)</span>
+        <input type="number" name="gib" required
+               min="0.5" max="{{ data.arc_tunable.max_safe_gib }}" step="0.5"
+               value="{{ data.arc_tunable.runtime_gib if data.arc_tunable.runtime_gib > 0 else (data.arc_tunable.total_ram_gib * 0.5)|round(1) }}">
+      </label>
+      <button type="submit">Aplicar</button>
+      <button type="submit" name="gib" value="0" class="secondary"
+              onclick="return confirm('Resetar para automático?');"
+              formnovalidate>Resetar (auto)</button>
+    </form>
+    <p class="hint-inline">
+      A alteração toma efeito imediatamente em runtime e fica persistida em
+      <code>{{ data.arc_tunable.modprobe_conf }}</code> para sobreviver reboots.
+      Limite máximo: <strong>90% da RAM</strong> ({{ data.arc_tunable.max_safe_gib }} GiB).
+      O ZFS evita reduzir bruscamente — ele liberará memória conforme novas alocações.
+    </p>
+  </div>
+</section>
+{% endif %}
 
 <section class="panel">
   <h3>Hit ratio por categoria <small>(acumulado desde o boot)</small></h3>

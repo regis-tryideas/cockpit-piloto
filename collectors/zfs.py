@@ -3,6 +3,10 @@ import subprocess
 from pathlib import Path
 
 ARCSTATS_PATH = Path("/proc/spl/kstat/zfs/arcstats")
+ARC_MAX_PATH = Path("/sys/module/zfs/parameters/zfs_arc_max")
+ARC_MIN_PATH = Path("/sys/module/zfs/parameters/zfs_arc_min")
+MODPROBE_CONF = Path("/etc/modprobe.d/zfs.conf")
+RAM_SAFETY_MAX_PCT = 0.90  # nunca passar de 90% da RAM total
 
 
 def available() -> dict:
@@ -446,11 +450,164 @@ def collect(interval: int = 1) -> dict:
         "scrubs": scrubs,
         "datasets": datasets(),
         "arc": arc_stats(),
+        "arc_tunable": arc_tunable_info(),
         "io": pool_io(interval),
         "vdev_io": vdev_io(interval),
         "latency": pool_latency(interval),
         "snapshots": snapshot_summary(),
     }
+
+
+def arc_max_runtime_bytes() -> int | None:
+    raw = _read_sysfs(ARC_MAX_PATH)
+    try:
+        return int(raw) if raw is not None else None
+    except (ValueError, TypeError):
+        return None
+
+
+def arc_min_runtime_bytes() -> int | None:
+    raw = _read_sysfs(ARC_MIN_PATH)
+    try:
+        return int(raw) if raw is not None else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _read_sysfs(p: Path) -> str | None:
+    try:
+        return p.read_text().strip()
+    except OSError:
+        return None
+
+
+def total_ram_bytes() -> int:
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    parts = line.split()
+                    return int(parts[1]) * 1024
+    except OSError:
+        pass
+    return 0
+
+
+def arc_tunable_info() -> dict:
+    """Estado atual do ARC max, valor persistido e limites de segurança."""
+    runtime = arc_max_runtime_bytes()
+    arc_min = arc_min_runtime_bytes()
+    total_ram = total_ram_bytes()
+    persisted = _read_persisted_arc_max()
+    return {
+        "supported": ARC_MAX_PATH.exists(),
+        "runtime_bytes": runtime,
+        "runtime_gib": round(runtime / 1024**3, 2) if runtime else 0.0,
+        "is_auto": runtime == 0,
+        "min_bytes": arc_min,
+        "min_gib": round(arc_min / 1024**3, 2) if arc_min else 0.0,
+        "total_ram_gib": round(total_ram / 1024**3, 2),
+        "max_safe_gib": round(total_ram * RAM_SAFETY_MAX_PCT / 1024**3, 2),
+        "persisted_bytes": persisted,
+        "persisted_gib": round(persisted / 1024**3, 2) if persisted else None,
+        "modprobe_conf": str(MODPROBE_CONF),
+    }
+
+
+def _read_persisted_arc_max() -> int | None:
+    """Lê /etc/modprobe.d/zfs.conf procurando 'options zfs zfs_arc_max=...'."""
+    if not MODPROBE_CONF.exists():
+        return None
+    try:
+        for line in MODPROBE_CONF.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("options zfs") and "zfs_arc_max" in line:
+                for token in line.split():
+                    if token.startswith("zfs_arc_max="):
+                        try:
+                            return int(token.split("=", 1)[1])
+                        except ValueError:
+                            return None
+    except OSError:
+        return None
+    return None
+
+
+def set_arc_max(gib: float, persist: bool = True) -> tuple[bool, str]:
+    """Define zfs_arc_max em bytes. Retorna (sucesso, mensagem).
+
+    - gib=0 reseta para automático (kernel calcula sozinho).
+    - Limite máximo de segurança: 90% da RAM total.
+    """
+    if not ARC_MAX_PATH.exists():
+        return False, "Módulo ZFS não está carregado (parameters/zfs_arc_max ausente)."
+
+    info = arc_tunable_info()
+
+    if gib < 0 or gib > 4096:
+        return False, "Valor fora do intervalo aceito."
+
+    if gib == 0:
+        target_bytes = 0  # automático
+    else:
+        if gib < 0.5:
+            return False, "Mínimo aceitável: 0.5 GiB."
+        if gib > info["max_safe_gib"]:
+            return False, (
+                f"Valor excede o limite de segurança ({info['max_safe_gib']:.1f} GiB = "
+                f"{int(RAM_SAFETY_MAX_PCT*100)}% da RAM total {info['total_ram_gib']:.1f} GiB)."
+            )
+        target_bytes = int(gib * 1024**3)
+
+    try:
+        ARC_MAX_PATH.write_text(str(target_bytes))
+    except OSError as e:
+        return False, f"Falha ao aplicar em runtime: {e}"
+
+    persisted_msg = ""
+    if persist:
+        ok, persisted_msg = _persist_arc_max(target_bytes)
+        if not ok:
+            return False, f"Aplicado em runtime mas falhou ao persistir: {persisted_msg}"
+
+    if target_bytes == 0:
+        return True, "ARC max resetado para automático (kernel calcula). " + persisted_msg
+    return True, (
+        f"ARC max configurado para {gib} GiB em runtime. {persisted_msg}"
+    )
+
+
+def _persist_arc_max(target_bytes: int) -> tuple[bool, str]:
+    """Atualiza /etc/modprobe.d/zfs.conf substituindo a linha de zfs_arc_max."""
+    new_line = (
+        f"options zfs zfs_arc_max={target_bytes}"
+        if target_bytes > 0 else
+        "# zfs_arc_max removido — kernel calcula automaticamente"
+    )
+    try:
+        if MODPROBE_CONF.exists():
+            existing = MODPROBE_CONF.read_text().splitlines()
+            replaced = False
+            out_lines = []
+            for line in existing:
+                if line.strip().startswith("options zfs") and "zfs_arc_max" in line:
+                    if target_bytes > 0:
+                        out_lines.append(new_line)
+                    # se reset (target=0), apaga linha existente
+                    replaced = True
+                else:
+                    out_lines.append(line)
+            if not replaced and target_bytes > 0:
+                out_lines.append(new_line)
+            MODPROBE_CONF.write_text("\n".join(out_lines).rstrip() + "\n")
+        else:
+            if target_bytes > 0:
+                MODPROBE_CONF.write_text(new_line + "\n")
+        return True, f"persistido em {MODPROBE_CONF}."
+    except OSError as e:
+        return False, str(e)
 
 
 def _availability_message(state: dict) -> str:
