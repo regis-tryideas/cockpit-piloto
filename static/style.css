@@ -695,6 +695,29 @@ tr.vm-stopped { opacity: 0.5; }
   width: 100%;
 }
 
+/* Grid de gráficos compactos (3 por linha) */
+.chart-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.chart-grid-3 .panel { margin-bottom: 0; }
+.chart-grid-3 .chart-wrap { height: 180px; }
+.chart-grid-3 .hist-header h3 { font-size: 13px; }
+.chart-grid-3 .hist-header h3 small { display: none; }
+
+/* Mini-tables lado a lado */
+.mini-tables-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.mini-tables-3 .panel { margin-bottom: 0; }
+.mini-tables-3 table { font-size: 12px; }
+.mini-tables-3 td, .mini-tables-3 th { padding: 5px 8px; }
+
 /* Explainer (collapsible "como ler") */
 .explainer {
   background: #0d1117;

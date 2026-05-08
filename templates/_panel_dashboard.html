@@ -2,30 +2,311 @@
 {% from "_history.html" import history_block, explainer %}
 {% block panel %}
 
-{# ---------- Histórico consolidado ---------- #}
+{# ---------- Cards essenciais ---------- #}
+<section class="summary-cards">
+  {# Uptime #}
+  {% set u = data.system_info.uptime_s %}
+  {% set d_days = u // 86400 %}
+  {% set d_hours = (u % 86400) // 3600 %}
+  <div class="card">
+    <div class="card-label" data-tip="Tempo desde o último boot da máquina.">Uptime</div>
+    <div class="card-value small">{{ d_days }}d {{ d_hours }}h</div>
+    <div class="card-foot">{{ data.system_info.distro.id or '—' }} · kernel {{ data.system_info.kernel }}</div>
+  </div>
+
+  {# CPU% #}
+  {% if not data.cpu.error %}
+  <div class="card">
+    <div class="card-label" data-tip="Percentual da CPU em uso (todos os cores agregados). 100% − %idle.">CPU</div>
+    <div class="card-value">{{ "%.1f"|format(data.cpu.overall.busy) }}%</div>
+    <div class="card-foot">
+      iowait {{ "%.1f"|format(data.cpu.overall.iowait) }}% · {{ data.cpu.cpu_count }} cores
+    </div>
+    <div class="bar {% if data.cpu.overall.busy >= 90 %}critical{% elif data.cpu.overall.busy >= 70 %}warn{% endif %} bar-wide">
+      <span style="width: {{ [data.cpu.overall.busy,100]|min }}%"></span>
+    </div>
+  </div>
+
+  {# Load avg #}
+  <div class="card">
+    <div class="card-label" data-tip="Média de processos rodando ou prontos nos últimos 1m / 5m / 15m. Acima do nº de cores em janelas longas indica saturação.">Load avg</div>
+    <div class="card-value small">
+      {{ "%.2f"|format(data.cpu.loadavg["1m"]) }} ·
+      {{ "%.2f"|format(data.cpu.loadavg["5m"]) }} ·
+      {{ "%.2f"|format(data.cpu.loadavg["15m"]) }}
+    </div>
+    <div class="card-foot">1m / 5m / 15m</div>
+  </div>
+  {% endif %}
+
+  {# Memória #}
+  {% if not data.memory.error %}
+  {% set ram = data.memory.ram_kb %}
+  <div class="card">
+    <div class="card-label" data-tip="RAM efetivamente em uso (total − available). MemAvailable é a estimativa real do que apps podem alocar sem swap.">Memória</div>
+    <div class="card-value">{{ data.memory.ram_pct.used }}%</div>
+    <div class="card-foot">
+      {{ (ram.used/1024/1024)|round(1) }} / {{ (ram.total/1024/1024)|round(1) }} GiB
+    </div>
+    <div class="bar {% if data.memory.ram_pct.used >= 90 %}critical{% elif data.memory.ram_pct.used >= 75 %}warn{% endif %} bar-wide">
+      <span style="width: {{ [data.memory.ram_pct.used,100]|min }}%"></span>
+    </div>
+  </div>
+
+  {# Swap #}
+  {% set swap = data.memory.swap_kb %}
+  <div class="card">
+    <div class="card-label" data-tip="Swap em uso. Pode ser benigno (kernel moveu páginas raramente acessadas). Combine com swapin/out (vmstat) para ver atividade real.">Swap</div>
+    <div class="card-value">{{ data.memory.swap_pct }}%</div>
+    <div class="card-foot">
+      {{ (swap.used/1024/1024)|round(2) }} / {{ (swap.total/1024/1024)|round(1) }} GiB
+    </div>
+  </div>
+  {% endif %}
+
+  {# Disco mais ocupado #}
+  {% if not data.disk.error and data.disk.physical_devices %}
+  {% set busiest = data.disk.physical_devices[0] %}
+  <div class="card">
+    <div class="card-label" data-tip="Disco físico com maior %util na amostra atual. Combine com 'aqu-sz' e 'avg latency' antes de concluir saturação.">Disco mais ocupado</div>
+    <div class="card-value">{{ "%.1f"|format(busiest.util) }}%</div>
+    <div class="card-foot">{{ busiest.device }} · {{ "%.0f"|format(busiest.total_iops) }} IOPS · {{ "%.2f"|format(busiest.avg_latency) }} ms</div>
+    <div class="bar {% if busiest.util >= 90 %}critical{% elif busiest.util >= 70 %}warn{% endif %} bar-wide">
+      <span style="width: {{ [busiest.util,100]|min }}%"></span>
+    </div>
+  </div>
+
+  {# Total IOPS #}
+  {% set total_iops = data.disk.physical_devices|sum(attribute='total_iops') %}
+  {% set total_rkb = data.disk.physical_devices|sum(attribute='rkB_s') %}
+  {% set total_wkb = data.disk.physical_devices|sum(attribute='wkB_s') %}
+  <div class="card">
+    <div class="card-label" data-tip="Soma de IOPS (read+write) de todos os discos físicos.">IOPS total</div>
+    <div class="card-value">{{ "%.0f"|format(total_iops) }}</div>
+    <div class="card-foot">
+      ↓ {{ (total_rkb/1024)|round(2) }} MiB/s · ↑ {{ (total_wkb/1024)|round(2) }} MiB/s
+    </div>
+  </div>
+  {% endif %}
+
+  {# Rede total #}
+  {% if not data.network.error %}
+  {% set rx_total = data.network.interfaces|sum(attribute='rx_kbps') %}
+  {% set tx_total = data.network.interfaces|sum(attribute='tx_kbps') %}
+  <div class="card">
+    <div class="card-label" data-tip="Soma de RX e TX de todas as interfaces (excluindo loopback é configurado no coletor).">Rede total</div>
+    <div class="card-value small">
+      ↓ {{ (rx_total/1024)|round(2) }} MiB/s<br>
+      ↑ {{ (tx_total/1024)|round(2) }} MiB/s
+    </div>
+    <div class="card-foot">{{ data.network.interfaces|length }} interfaces</div>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- Cards de saúde / pressão ---------- #}
+<section class="summary-cards">
+  {# Processos #}
+  <div class="card">
+    <div class="card-label" data-tip="Total de processos no sistema, com quebra por estado. R=running, S=sleeping, D=disk-wait, Z=zombie.">Processos</div>
+    <div class="card-value">{{ data.proc_states.total }}</div>
+    <div class="card-foot">
+      R {{ data.proc_states.running }} ·
+      D <span class="{% if data.proc_states.disk_sleep > 5 %}warn-text{% endif %}">{{ data.proc_states.disk_sleep }}</span> ·
+      Z <span class="{% if data.proc_states.zombie > 0 %}warn-text{% endif %}">{{ data.proc_states.zombie }}</span>
+    </div>
+  </div>
+
+  {# FDs #}
+  {% if data.fds %}
+  <div class="card">
+    <div class="card-label" data-tip="File descriptors em uso vs fs.file-max. Quando próximo de 100%, processos novos param de abrir arquivos/sockets.">File descriptors</div>
+    <div class="card-value">{{ data.fds.used_pct }}%</div>
+    <div class="card-foot">{{ '{:,}'.format(data.fds.allocated) }} / {{ '{:,}'.format(data.fds.max) }}</div>
+  </div>
+  {% endif %}
+
+  {# PSI CPU #}
+  {% if not data.pressure.error and data.pressure.cpu and data.pressure.cpu.some %}
+  {% set v = data.pressure.cpu.some.avg10 %}
+  <div class="card">
+    <div class="card-label" data-tip="Pressure Stall Information CPU 'some' avg10s — % do tempo em que ao menos 1 tarefa esperou por CPU. >10%: pressão. >50%: crítico.">PSI CPU (10s)</div>
+    <div class="card-value {% if v >= 50 %}warn-text{% endif %}">{{ "%.1f"|format(v) }}%</div>
+    <div class="card-foot">avg10 / some</div>
+  </div>
+  {% endif %}
+
+  {# PSI Mem #}
+  {% if not data.pressure.error and data.pressure.memory and data.pressure.memory.some %}
+  {% set v = data.pressure.memory.some.avg10 %}
+  <div class="card">
+    <div class="card-label" data-tip="PSI memória 'some' avg10s — % do tempo em que ao menos 1 tarefa esperou por memória. Sinal cedo de pressão antes de OOM.">PSI Mem (10s)</div>
+    <div class="card-value {% if v >= 50 %}warn-text{% endif %}">{{ "%.1f"|format(v) }}%</div>
+    <div class="card-foot">avg10 / some</div>
+  </div>
+  {% endif %}
+
+  {# PSI IO #}
+  {% if not data.pressure.error and data.pressure.io and data.pressure.io.some %}
+  {% set v = data.pressure.io.some.avg10 %}
+  <div class="card">
+    <div class="card-label" data-tip="PSI I/O 'some' avg10s — % do tempo em que ao menos 1 tarefa esperou por I/O. Sinal mais cedo de gargalo de disco que iowait.">PSI IO (10s)</div>
+    <div class="card-value {% if v >= 50 %}warn-text{% endif %}">{{ "%.1f"|format(v) }}%</div>
+    <div class="card-foot">avg10 / some</div>
+  </div>
+  {% endif %}
+
+  {# Hostname #}
+  <div class="card">
+    <div class="card-label" data-tip="Nome do host. FQDN no rodapé.">Host</div>
+    <div class="card-value small mono">{{ data.system_info.hostname }}</div>
+    <div class="card-foot mono">{{ data.system_info.physical_cpus }}/{{ data.system_info.logical_cpus }} cores · {{ data.system_info.arch }}</div>
+  </div>
+</section>
+
+{# ---------- 1ª linha de gráficos: CPU, Memória, PSI ---------- #}
+<div class="chart-grid-3">
 {{ history_block(
-  'overview-chart',
-  'Visão geral — CPU, memória e disco',
-  'cpu',
+  'dash-cpu-chart', 'Uso de CPU (%)', 'cpu',
   '[
-    {"label":"CPU busy %","key":"busy","color":"#58a6ff"},
-    {"label":"iowait %","key":"iowait","color":"#f0883e"}
+    {"label":"busy","key":"busy","color":"#58a6ff"},
+    {"label":"iowait","key":"iowait","color":"#f0883e"}
   ]',
   y_max=100, y_label='%'
 ) }}
 
 {{ history_block(
-  'overview-mem-chart',
-  'Memória ao longo do tempo',
-  'mem',
+  'dash-mem-chart', 'Memória (%)', 'mem',
   '[
-    {"label":"RAM %","key":"used_pct","color":"#3fb950"},
-    {"label":"Swap %","key":"swap_pct","color":"#f0883e"}
+    {"label":"RAM","key":"used_pct","color":"#3fb950"},
+    {"label":"Swap","key":"swap_pct","color":"#f0883e"}
   ]',
   y_max=100, y_label='%'
 ) }}
 
-{# ---------- Pressure (PSI) ---------- #}
+{{ history_block(
+  'dash-psi-chart', 'PSI some (%)', 'psi',
+  '[
+    {"label":"CPU","key":"cpu_some10","color":"#58a6ff"},
+    {"label":"Mem","key":"mem_some10","color":"#3fb950"},
+    {"label":"IO","key":"io_some10","color":"#a371f7"}
+  ]',
+  y_label='%'
+) }}
+</div>
+
+{# ---------- 2ª linha de gráficos: Disco IOPS, Latência, Rede ---------- #}
+<div class="chart-grid-3">
+{{ history_block(
+  'dash-disk-iops-chart', 'IOPS por disco', 'disk',
+  '[{"label":"IOPS","key":"total_iops","groupBy":"device"}]',
+  y_label='ops/s'
+) }}
+
+{{ history_block(
+  'dash-disk-lat-chart', 'Response time disco (ms)', 'disk',
+  '[{"label":"avg latency","key":"avg_latency","groupBy":"device"}]',
+  y_label='ms'
+) }}
+
+{{ history_block(
+  'dash-net-chart', 'Rede RX (kB/s)', 'net',
+  '[{"label":"RX","key":"rx_kbps","groupBy":"iface"}]',
+  y_label='kB/s'
+) }}
+</div>
+
+{# ---------- 3ª linha: Load + Procs + FDs ---------- #}
+<div class="chart-grid-3">
+{{ history_block(
+  'dash-load-chart', 'Load average', 'cpu',
+  '[
+    {"label":"1m","key":"load1","color":"#58a6ff"},
+    {"label":"5m","key":"load5","color":"#a371f7"},
+    {"label":"15m","key":"load15","color":"#3fb950"}
+  ]',
+  y_label='load'
+) }}
+
+{{ history_block(
+  'dash-procs-chart', 'Processos por estado', 'procs',
+  '[
+    {"label":"running","key":"running","color":"#3fb950"},
+    {"label":"disk wait","key":"disk_sleep","color":"#f0883e"},
+    {"label":"zombie","key":"zombie","color":"#f85149"}
+  ]',
+  y_label='count'
+) }}
+
+{{ history_block(
+  'dash-fd-chart', 'File descriptors em uso', 'procs',
+  '[{"label":"FDs","key":"fd_allocated","color":"#58a6ff"}]',
+  y_label='fds'
+) }}
+</div>
+
+{# ---------- Mini-tabelas: top procs CPU/MEM, filesystems ---------- #}
+<div class="mini-tables-3">
+<section class="panel">
+  <h3>Top 5 processos · CPU</h3>
+  <table>
+    <thead><tr><th>PID</th><th>Nome</th><th>CPU%</th><th>RSS</th></tr></thead>
+    <tbody>
+      {% for p in data.top_cpu %}
+      <tr>
+        <td>{{ p.pid }}</td>
+        <td><span class="mono">{{ p.name }}</span></td>
+        <td><strong>{{ "%.1f"|format(p.cpu_pct) }}%</strong></td>
+        <td>{{ (p.rss_b/1024/1024)|round(1) }} MiB</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h3>Top 5 processos · Memória</h3>
+  <table>
+    <thead><tr><th>PID</th><th>Nome</th><th>RSS</th><th>%MEM</th></tr></thead>
+    <tbody>
+      {% for p in data.top_mem %}
+      <tr>
+        <td>{{ p.pid }}</td>
+        <td><span class="mono">{{ p.name }}</span></td>
+        <td>{{ (p.rss_b/1024/1024)|round(1) }} MiB</td>
+        <td><strong>{{ p.mem_pct }}%</strong></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if data.top_filesystems %}
+<section class="panel">
+  <h3>Filesystems mais cheios</h3>
+  <table>
+    <thead><tr><th>Mount</th><th>Tipo</th><th>%</th></tr></thead>
+    <tbody>
+      {% for fs in data.top_filesystems %}
+      {% set pct = (fs.use_pct or '0').rstrip('%')|int %}
+      <tr>
+        <td><span class="mono">{{ fs.mount }}</span></td>
+        <td>{{ fs.type }}</td>
+        <td>
+          <div class="bar {% if pct >= 90 %}critical{% elif pct >= 75 %}warn{% endif %}">
+            <span style="width: {{ pct }}%"></span>
+          </div>
+          <span class="bar-value">{{ fs.use_pct }}</span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+</div>
+
+{# ---------- PSI detalhado (mantém tabela e explicação) ---------- #}
 <section class="panel">
   <h3>Pressure Stall Information <small>(% de tempo em que tarefas ficaram bloqueadas)</small></h3>
   {% if data.pressure.error %}
@@ -59,170 +340,14 @@
     </div>
     {% endfor %}
   </div>
-  <p class="hint-inline">
-    <strong>some</strong>: ao menos uma tarefa stalled · <strong>full</strong>: todas as tarefas stalled
-    (apenas memória/io). Valores próximos de 0 = sem contenção.
-  </p>
   {% endif %}
 </section>
 
-{{ history_block(
-  'psi-chart',
-  'PSI ao longo do tempo (avg10)',
-  'psi',
-  '[
-    {"label":"CPU some","key":"cpu_some10","color":"#58a6ff"},
-    {"label":"Mem some","key":"mem_some10","color":"#3fb950"},
-    {"label":"Mem full","key":"mem_full10","color":"#f0883e"},
-    {"label":"IO some","key":"io_some10","color":"#a371f7"},
-    {"label":"IO full","key":"io_full10","color":"#f85149"}
-  ]',
-  y_label='%'
-) }}
-
-{{ explainer('Entendendo PSI (Pressure Stall Information)', [
-  ('O que mede',  'Percentual do tempo em que tarefas ficaram bloqueadas aguardando um recurso (CPU, memória ou I/O).'),
-  ('some',        'Ao menos uma tarefa estava bloqueada — sinaliza pressão pontual.'),
-  ('full',        '<em>Todas</em> as tarefas runnable estavam bloqueadas — sinaliza contenção severa (não existe para CPU, só memória e IO).'),
-  ('avg10/60/300','Média móvel exponencial nas janelas de 10s, 60s e 300s. Boas faixas: &lt;10% normal, 10–50% pressão moderada, &gt;50% crítico.'),
-  ('Quando usar', 'PSI &gt; 0 e crescendo é o sinal mais cedo de saturação — antes de iowait alto ou OOM. Use para diagnosticar gargalo: se IO some sobe e CPU some não, o gargalo é disco.'),
+{{ explainer('Como ler a Dashboard', [
+  ('Cards',     'Snapshot do estado atual. Hovere o nome de cada card para ver a explicação completa da métrica.'),
+  ('Gráficos',  'Mostram o histórico (1h por padrão; selecione 6h/24h/72h em cada). Os 3 primeiros cobrem CPU, memória e PSI; os 3 seguintes cobrem disco e rede; os 3 últimos focam em processos e FDs.'),
+  ('PSI',       '<strong>some</strong> = ao menos uma tarefa stalled. <strong>full</strong> = todas as runnable stalled (existe só para mem/io). Crescimento de PSI é o sinal mais cedo de saturação — antes de iowait alto ou OOM.'),
+  ('Top procs', 'CPU% no topo é relativo a 1 core (pode passar 100% em multi-thread). Para identificar saturação real do host, ver Sistema → CPU% (host).'),
 ]) }}
-
-{# ---------- Resumo CPU/Mem/Net ---------- #}
-<section class="summary-cards">
-  {% if not data.cpu.error %}
-  <div class="card">
-    <div class="card-label">CPU</div>
-    <div class="card-value">{{ "%.1f"|format(data.cpu.overall.busy) }}%</div>
-    <div class="card-foot">
-      iowait {{ "%.1f"|format(data.cpu.overall.iowait) }}% · {{ data.cpu.cpu_count }} cores
-    </div>
-    <div class="bar {% if data.cpu.overall.busy >= 90 %}critical{% elif data.cpu.overall.busy >= 70 %}warn{% endif %} bar-wide">
-      <span style="width: {{ [data.cpu.overall.busy,100]|min }}%"></span>
-    </div>
-  </div>
-  {% endif %}
-
-  {% if not data.cpu.error %}
-  <div class="card">
-    <div class="card-label">Load Avg</div>
-    <div class="card-value small">
-      {{ "%.2f"|format(data.cpu.loadavg["1m"]) }} ·
-      {{ "%.2f"|format(data.cpu.loadavg["5m"]) }} ·
-      {{ "%.2f"|format(data.cpu.loadavg["15m"]) }}
-    </div>
-    <div class="card-foot">1m / 5m / 15m</div>
-  </div>
-  {% endif %}
-
-  {% if not data.memory.error %}
-  {% set ram = data.memory.ram_kb %}
-  <div class="card">
-    <div class="card-label">Memória</div>
-    <div class="card-value">{{ data.memory.ram_pct.used }}%</div>
-    <div class="card-foot">
-      {{ (ram.used/1024/1024)|round(2) }} / {{ (ram.total/1024/1024)|round(2) }} GiB
-    </div>
-    <div class="bar {% if data.memory.ram_pct.used >= 90 %}critical{% elif data.memory.ram_pct.used >= 75 %}warn{% endif %} bar-wide">
-      <span style="width: {{ [data.memory.ram_pct.used,100]|min }}%"></span>
-    </div>
-  </div>
-  {% endif %}
-
-  {% if not data.memory.error %}
-  <div class="card">
-    <div class="card-label">Swap</div>
-    <div class="card-value">{{ data.memory.swap_pct }}%</div>
-    {% set swap = data.memory.swap_kb %}
-    <div class="card-foot">
-      {{ (swap.used/1024/1024)|round(2) }} / {{ (swap.total/1024/1024)|round(2) }} GiB
-    </div>
-  </div>
-  {% endif %}
-
-  {% if not data.network.error %}
-  {% set rx_total = data.network.interfaces|sum(attribute='rx_kbps') %}
-  {% set tx_total = data.network.interfaces|sum(attribute='tx_kbps') %}
-  <div class="card">
-    <div class="card-label">Rede (total)</div>
-    <div class="card-value small">
-      ↓ {{ "%.1f"|format(rx_total) }} kB/s<br>
-      ↑ {{ "%.1f"|format(tx_total) }} kB/s
-    </div>
-    <div class="card-foot">{{ data.network.interfaces|length }} interfaces</div>
-  </div>
-  {% endif %}
-
-  {% if not data.disk.error and data.disk.devices %}
-  {% set busiest = data.disk.devices[0] %}
-  <div class="card">
-    <div class="card-label">Disco mais ocupado</div>
-    <div class="card-value">{{ "%.1f"|format(busiest.util) }}%</div>
-    <div class="card-foot">{{ busiest.device }} · {{ data.disk.devices|length }} devices</div>
-    <div class="bar {% if busiest.util >= 90 %}critical{% elif busiest.util >= 70 %}warn{% endif %} bar-wide">
-      <span style="width: {{ [busiest.util,100]|min }}%"></span>
-    </div>
-  </div>
-  {% endif %}
-</section>
-
-{# ---------- Discos resumo ---------- #}
-{% if not data.disk.error and data.disk.devices %}
-<section class="panel">
-  <h3>Discos <small>(top por %util)</small></h3>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr><th>Device</th><th>r/s</th><th>w/s</th><th>rkB/s</th><th>wkB/s</th><th>%util</th></tr>
-      </thead>
-      <tbody>
-        {% for d in data.disk.devices[:10] %}
-        <tr>
-          <td><strong>{{ d.device }}</strong></td>
-          <td>{{ "%.2f"|format(d.r_s) }}</td>
-          <td>{{ "%.2f"|format(d.w_s) }}</td>
-          <td>{{ "%.1f"|format(d.rkB_s) }}</td>
-          <td>{{ "%.1f"|format(d.wkB_s) }}</td>
-          <td>
-            <div class="bar {% if d.util >= 90 %}critical{% elif d.util >= 70 %}warn{% endif %}">
-              <span style="width: {{ [d.util,100]|min }}%"></span>
-            </div>
-            <span class="bar-value">{{ "%.1f"|format(d.util) }}%</span>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
-
-{# ---------- Rede resumo ---------- #}
-{% if not data.network.error and data.network.interfaces %}
-<section class="panel">
-  <h3>Rede por interface</h3>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr><th>Interface</th><th>RX kB/s</th><th>TX kB/s</th><th>RX pkt/s</th><th>TX pkt/s</th><th>Erros/Drops</th></tr>
-      </thead>
-      <tbody>
-        {% for n in data.network.interfaces %}
-        <tr>
-          <td><strong>{{ n.iface }}</strong></td>
-          <td>{{ "%.2f"|format(n.rx_kbps) }}</td>
-          <td>{{ "%.2f"|format(n.tx_kbps) }}</td>
-          <td>{{ "%.0f"|format(n.rx_pps) }}</td>
-          <td>{{ "%.0f"|format(n.tx_pps) }}</td>
-          <td class="{% if n.rx_errors or n.tx_errors or n.rx_drop or n.tx_drop %}warn-text{% endif %}">
-            {{ n.rx_errors + n.tx_errors }} / {{ n.rx_drop + n.tx_drop }}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
 
 {% endblock %}

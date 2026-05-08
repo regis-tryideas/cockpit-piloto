@@ -131,12 +131,25 @@ def index():
 @login_required
 def view_dashboard():
     interval = _interval()
+    top = system_col.top_processes(limit=5)
+    disk_data = disk_col.collect(interval=interval)
+    fs_sorted = sorted(
+        disk_data.get("filesystems", []),
+        key=lambda fs: int((fs.get("use_pct") or "0").rstrip("%") or 0),
+        reverse=True,
+    )[:5]
     data = {
         "cpu": cpu_col.collect(interval=interval),
         "memory": mem_col.collect(),
-        "disk": disk_col.collect(interval=interval),
+        "disk": disk_data,
         "network": net_col.collect(interval=interval),
         "pressure": psi_col.collect(),
+        "system_info": system_col.info(),
+        "proc_states": system_col.process_states(),
+        "fds": system_col.fd_stats(),
+        "top_cpu": top["by_cpu"],
+        "top_mem": top["by_mem"],
+        "top_filesystems": fs_sorted,
     }
     return render_template(
         "_panel_dashboard.html",
