@@ -236,6 +236,53 @@ th.sortable::after {
 }
 th.sorted-asc::after  { content: "▲"; opacity: 1; color: #58a6ff; }
 th.sorted-desc::after { content: "▼"; opacity: 1; color: #58a6ff; }
+
+/* Tooltip puro CSS — basta colocar data-tip="..." no elemento */
+[data-tip] {
+  position: relative;
+  cursor: help;
+}
+[data-tip]::before {
+  content: "ⓘ";
+  display: inline-block;
+  margin-left: 4px;
+  color: #58a6ff;
+  font-size: 11px;
+  opacity: 0.6;
+  vertical-align: middle;
+}
+[data-tip]:hover::before { opacity: 1; }
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 100;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 360px;
+  padding: 9px 12px;
+  background: #1c2128;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #e6edf3;
+  font-size: 12px;
+  font-weight: normal;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  pointer-events: none;
+}
+/* Em <th> de tabela posicionar abaixo, pra não cortar header sticky */
+th[data-tip]:hover::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+/* Sem ícone quando o ::before atrapalha (cards usam variante sem) */
+[data-tip].no-icon::before { content: ""; margin: 0; }
 tbody tr:hover { background: #1c2128; }
 .warn-text { color: #f0883e; font-weight: 600; }
 

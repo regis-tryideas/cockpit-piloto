@@ -22,8 +22,14 @@
     <table>
       <thead>
         <tr>
-          <th>Pool</th><th>Saúde</th><th>Tamanho</th><th>Alocado</th>
-          <th>Livre</th><th>Frag</th><th>%Cap</th><th>Dedup</th>
+          <th>Pool</th>
+          <th data-tip="ONLINE = todos os devices íntegros · DEGRADED = funciona, mas algum disco com erro · FAULTED = pool não montável · UNAVAIL/REMOVED = device sumiu">Saúde</th>
+          <th data-tip="Capacidade bruta antes do overhead de RAID/parity">Tamanho</th>
+          <th data-tip="Espaço efetivamente em uso (já considerando overhead)">Alocado</th>
+          <th>Livre</th>
+          <th data-tip="Fragmentação do pool. Acima de 50% começa a degradar escritas sequenciais. ZFS não desfragmenta automaticamente.">Frag</th>
+          <th data-tip="% de capacidade utilizada. ZFS perde performance acima de 80% (CoW precisa de espaço livre); evite passar de 90%.">%Cap</th>
+          <th data-tip="Razão de deduplicação (1.0x = sem dedup ativo). Dedup tem custo alto de RAM, ~5 GB por TB de pool.">Dedup</th>
         </tr>
       </thead>
       <tbody>
@@ -64,8 +70,10 @@
       <thead>
         <tr>
           <th>Pool</th><th>Alocado</th><th>Livre</th>
-          <th>Read IOPS</th><th>Write IOPS</th>
-          <th>Read B/s</th><th>Write B/s</th>
+          <th data-tip="Operações de leitura por segundo no pool agregado (todos os vdevs)">Read IOPS</th>
+          <th data-tip="Operações de escrita por segundo no pool agregado">Write IOPS</th>
+          <th data-tip="Throughput de leitura em bytes por segundo">Read B/s</th>
+          <th data-tip="Throughput de escrita em bytes por segundo">Write B/s</th>
         </tr>
       </thead>
       <tbody>
@@ -90,7 +98,7 @@
 {% if data.arc %}
 <section class="summary-cards">
   <div class="card">
-    <div class="card-label">ARC em uso</div>
+    <div class="card-label" data-tip="Memória usada pelo Adaptive Replacement Cache, o cache em RAM gerenciado pelo ZFS. Crescer até c_max é o esperado — o ZFS preenche a RAM disponível para acelerar leituras.">ARC em uso</div>
     <div class="card-value">{{ data.arc.size_gib }} GiB</div>
     <div class="card-foot">
       de {{ data.arc.c_max_gib }} GiB ({{ data.arc.fill_pct }}%)
@@ -100,14 +108,14 @@
     </div>
   </div>
   <div class="card">
-    <div class="card-label">Hit ratio (acumulado)</div>
+    <div class="card-label" data-tip="Percentual de leituras atendidas pelo ARC desde o último boot. >95% é excelente; abaixo de 80% sugere ARC pequeno demais ou workload muito random.">Hit ratio (acumulado)</div>
     <div class="card-value">{{ data.arc.hit_ratio_pct }}%</div>
     <div class="card-foot">
       hits {{ '{:,}'.format(data.arc.hits) }} · misses {{ '{:,}'.format(data.arc.misses) }}
     </div>
   </div>
   <div class="card">
-    <div class="card-label">L2ARC</div>
+    <div class="card-label" data-tip="Cache de segundo nível em SSD para blocos expulsos do ARC. Só aparece quando você adiciona cache devices ao pool com 'zpool add cache'.">L2ARC</div>
     <div class="card-value">
       {% if data.arc.l2_hits + data.arc.l2_misses %}
         {{ data.arc.l2_hit_ratio_pct }}%
@@ -118,7 +126,7 @@
     </div>
   </div>
   <div class="card">
-    <div class="card-label">MFU / MRU</div>
+    <div class="card-label" data-tip="MRU (Most Recently Used) = blocos lidos uma vez. MFU (Most Frequently Used) = blocos relidos. ZFS balanceia automaticamente. Ghost hits = blocos evictados que voltariam a ser úteis — indicador de pressão sobre o ARC.">MFU / MRU</div>
     <div class="card-value small">
       {{ data.arc.mfu_size_gib }} / {{ data.arc.mru_size_gib }} GiB
     </div>
@@ -127,7 +135,7 @@
     </div>
   </div>
   <div class="card">
-    <div class="card-label">Compressão (em RAM)</div>
+    <div class="card-label" data-tip="Razão entre tamanho descomprimido e comprimido dos blocos cacheados em RAM. Quanto maior, mais conteúdo cabe na mesma quantidade de memória física.">Compressão (em RAM)</div>
     <div class="card-value">{{ data.arc.compress_ratio }}x</div>
     <div class="card-foot">
       {{ data.arc.compressed_size_gib }} → {{ data.arc.uncompressed_size_gib }} GiB
@@ -135,7 +143,7 @@
   </div>
   {% if data.snapshots and data.snapshots.count %}
   <div class="card">
-    <div class="card-label">Snapshots</div>
+    <div class="card-label" data-tip="Cópias atômicas point-in-time. Ocupam apenas o delta (copy-on-write), então são baratas inicialmente. Excesso em datasets com muita escrita degrada performance.">Snapshots</div>
     <div class="card-value">{{ data.snapshots.count }}</div>
     <div class="card-foot">{{ data.snapshots.total_used_gib }} GiB usados</div>
   </div>
@@ -150,15 +158,15 @@
         <tr><th>Categoria</th><th>Hits</th><th>Misses</th><th>Hit ratio</th></tr>
       </thead>
       <tbody>
-        {% for label, key in [
-          ('Demand data',     'demand_data'),
-          ('Demand metadata', 'demand_metadata'),
-          ('Prefetch data',   'prefetch_data'),
-          ('Prefetch metadata','prefetch_metadata'),
+        {% for label, key, tip in [
+          ('Demand data',     'demand_data',     'Leituras de dados solicitadas diretamente pela aplicação (não-prefetch). É a métrica que mais afeta latência percebida pelo usuário.'),
+          ('Demand metadata', 'demand_metadata', 'Leituras de metadados (estrutura do filesystem: dnodes, inodes, indirect blocks) solicitadas pela aplicação.'),
+          ('Prefetch data',   'prefetch_data',   'Leituras antecipadas pelo prefetcher (read-ahead). Hit ratio baixo é esperado quando o workload é random.'),
+          ('Prefetch metadata','prefetch_metadata','Metadados antecipados pelo prefetcher.'),
         ] %}
         {% set s = data.arc[key] %}
         <tr>
-          <td>{{ label }}</td>
+          <td data-tip="{{ tip }}">{{ label }}</td>
           <td>{{ '{:,}'.format(s.hits) }}</td>
           <td>{{ '{:,}'.format(s.misses) }}</td>
           <td>
@@ -286,9 +294,12 @@
       <thead>
         <tr>
           <th>Pool</th>
-          <th>total_wait read</th><th>total_wait write</th>
-          <th>disk_wait read</th><th>disk_wait write</th>
-          <th>syncq read</th><th>syncq write</th>
+          <th data-tip="Tempo total que uma leitura passou no kernel ZFS (fila interna + disco). É o que a aplicação 'sente'.">total_wait read</th>
+          <th data-tip="Tempo total que uma escrita passou no kernel ZFS (fila interna + disco).">total_wait write</th>
+          <th data-tip="Tempo gasto somente no device físico em leitura. Se total_wait >> disk_wait, a contenção está nas filas internas do ZFS, não no disco.">disk_wait read</th>
+          <th data-tip="Tempo no device físico em escrita.">disk_wait write</th>
+          <th data-tip="Tempo na fila de I/O síncrono em leitura (raro, mas existe em fsync de dirs etc).">syncq read</th>
+          <th data-tip="Tempo na fila síncrona em escrita (fsync, write barriers). Alto = aplicação pedindo durabilidade frequentemente.">syncq write</th>
         </tr>
       </thead>
       <tbody>
@@ -332,7 +343,13 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>NAME</th><th>STATE</th><th>READ</th><th>WRITE</th><th>CKSUM</th></tr>
+        <tr>
+          <th>NAME</th>
+          <th data-tip="ONLINE = saudável · DEGRADED = funciona com falha · FAULTED = inacessível · UNAVAIL = não respondendo · OFFLINE = manualmente offline">STATE</th>
+          <th data-tip="Erros de leitura desde último 'zpool clear'. Qualquer valor não-zero merece investigação (cabo, controladora, disco morrendo).">READ</th>
+          <th data-tip="Erros de escrita. Geralmente indica falha do device.">WRITE</th>
+          <th data-tip="Erros de checksum — bit rot, cabo ruim ou controladora com problema. ZFS corrige se houver redundância (mirror/raidz).">CKSUM</th>
+        </tr>
       </thead>
       <tbody>
         {% for v in st.vdevs %}
