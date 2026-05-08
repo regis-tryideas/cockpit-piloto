@@ -201,6 +201,20 @@ def purge_history(retention_seconds: int = HISTORY_RETENTION_SECONDS):
             conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))
 
 
+def purge_non_physical_disks():
+    """Remove devices não-físicos (dm-*, zd*, md*, loop*, etc.) do histórico.
+
+    Usado em migrações para limpar amostras antigas após mudança no filtro
+    do coletor.
+    """
+    with connect() as conn:
+        conn.execute(
+            "DELETE FROM metrics_disk WHERE "
+            "device LIKE 'dm-%' OR device LIKE 'zd%' OR device LIKE 'md%' "
+            "OR device LIKE 'loop%' OR device LIKE 'ram%' OR device LIKE 'sr%'"
+        )
+
+
 def fetch_history(table: str, window_seconds: int,
                   group_col: str | None = None) -> list[dict]:
     if table not in HISTORY_TABLES:

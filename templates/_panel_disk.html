@@ -6,6 +6,22 @@
 {% else %}
 
 {{ history_block(
+  'disk-iops-chart',
+  'IOPS por device (read+write)',
+  'disk',
+  '[{"label":"IOPS","key":"total_iops","groupBy":"device"}]',
+  y_label='ops/s'
+) }}
+
+{{ history_block(
+  'disk-latency-chart',
+  'Response time médio por device (ms)',
+  'disk',
+  '[{"label":"avg latency","key":"avg_latency","groupBy":"device"}]',
+  y_label='ms'
+) }}
+
+{{ history_block(
   'disk-util-chart',
   '%util por device',
   'disk',
@@ -15,73 +31,26 @@
 
 {{ history_block(
   'disk-throughput-chart',
-  'Throughput de leitura (kB/s)',
+  'Throughput (kB/s) — read e write somados',
   'disk',
-  '[{"label":"rkB/s","key":"r_kbs","groupBy":"device"}]',
-  y_label='kB/s'
-) }}
-
-{{ history_block(
-  'disk-write-chart',
-  'Throughput de escrita (kB/s)',
-  'disk',
-  '[{"label":"wkB/s","key":"w_kbs","groupBy":"device"}]',
+  '[
+    {"label":"read","key":"r_kbs","groupBy":"device"}
+  ]',
   y_label='kB/s'
 ) }}
 
 {{ explainer('Como ler estas métricas', [
-  ('%util',     'Percentual do tempo em que o device esteve com pelo menos uma requisição em andamento. Próximo de 100% indica saturação. Em SSDs/NVMe modernos com paralelismo alto, %util pode chegar a 100% sem o device estar realmente saturado — combine com <code>aqu-sz</code> e latência (<code>await</code>).'),
-  ('r/s · w/s', 'IOPS de leitura e escrita por segundo (operações terminadas).'),
-  ('rkB/s · wkB/s', 'Throughput em kilobytes por segundo. Multiplique por 1024 para bytes.'),
-  ('r_await · w_await', 'Latência média (ms) das requisições <em>já contabilizando o tempo na fila</em>. Em discos rotacionais &lt;20 ms é saudável; em SSD &lt;1 ms; valores acima podem indicar contenção.'),
-  ('aqu-sz', 'Profundidade média da fila no device. >1 indica enfileiramento; valores altos sustentados sinalizam saturação real.'),
+  ('IOPS',           'Operações de I/O por segundo. <code>r/s + w/s</code>. Métrica chave de capacidade — discos rotacionais entregam ~80–200 IOPS; SATA SSD ~10–40 mil; NVMe ~100k–1M+. Alto IOPS com latência baixa = OK. Alto IOPS com latência subindo = chegando ao limite.'),
+  ('Response time (await)', 'Tempo médio (ms) que cada requisição leva, <em>já incluindo a fila</em>. Saudável: rotacional &lt;20 ms · SATA SSD &lt;5 ms · NVMe &lt;1 ms. <strong>"avg latency"</strong> nos gráficos é a média ponderada de r_await e w_await pelo IOPS de cada um.'),
+  ('r_await vs w_await', 'Separar leitura e escrita ajuda diagnosticar: se só w_await sobe, pode ser write barrier/fsync; se só r_await sobe, pode ser cache miss em workload random.'),
+  ('%util',     'Tempo em que o device teve pelo menos uma requisição em voo. Próximo de 100% indica saturação. Em SSDs/NVMe com alto paralelismo, %util pode atingir 100% sem saturação real — confie mais em <code>aqu-sz</code> e <em>latency</em>.'),
+  ('aqu-sz', 'Profundidade média da fila. >1 indica enfileiramento; valores altos sustentados confirmam saturação real (independente do %util).'),
+  ('rkB/s · wkB/s', 'Throughput em kilobytes por segundo. IOPS × tamanho médio das requisições.'),
 ]) }}
-
-{% macro disk_table(rows, title, subtitle) %}
-{% if rows %}
-<section class="panel">
-  <h3>{{ title }} <small>{{ subtitle }}</small></h3>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Device</th>
-          <th>r/s</th><th>w/s</th>
-          <th>rkB/s</th><th>wkB/s</th>
-          <th>r_await (ms)</th><th>w_await (ms)</th>
-          <th>aqu-sz</th>
-          <th>%util</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for d in rows %}
-        <tr>
-          <td><strong>{{ d.device }}</strong></td>
-          <td>{{ "%.2f"|format(d.r_s) }}</td>
-          <td>{{ "%.2f"|format(d.w_s) }}</td>
-          <td>{{ "%.1f"|format(d.rkB_s) }}</td>
-          <td>{{ "%.1f"|format(d.wkB_s) }}</td>
-          <td>{{ "%.2f"|format(d.r_await) }}</td>
-          <td>{{ "%.2f"|format(d.w_await) }}</td>
-          <td>{{ "%.2f"|format(d.aqu_sz) }}</td>
-          <td>
-            <div class="bar {% if d.util >= 90 %}critical{% elif d.util >= 70 %}warn{% endif %}">
-              <span style="width: {{ [d.util,100]|min }}%"></span>
-            </div>
-            <span class="bar-value">{{ "%.1f"|format(d.util) }}%</span>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
-{% endmacro %}
 
 {% if data.all_devices and data.all_devices|length > 1 %}
 <section class="panel">
-  <h3>Filtro <small>(janela de {{ data.interval }}s)</small></h3>
+  <h3>Filtro de devices</h3>
   <form method="get" class="device-filter">
     <span class="filter-label">Devices:</span>
     {% for dev in data.all_devices %}
@@ -97,9 +66,62 @@
 </section>
 {% endif %}
 
-{{ disk_table(data.physical_devices, 'Discos físicos', '(nvme*, sd*, vd*, hd*, xvd*)') }}
-{{ disk_table(data.logical_devices, 'RAID / LVM / Multipath', '(md*, dm-*)') }}
-{{ disk_table(data.other_devices, 'Outros devices', '(loop, ram, sr, etc.)') }}
+{% if data.physical_devices %}
+<section class="panel">
+  <h3>Discos físicos
+    <small>(janela {{ data.interval }}s · apenas <code>nvme*/sd*/vd*/hd*/xvd*</code>; <code>dm-*</code>, <code>zd*</code>, <code>md*</code>, <code>loop*</code> ocultos)</small>
+  </h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Device</th>
+          <th title="IOPS = operações por segundo">Read IOPS</th>
+          <th>Write IOPS</th>
+          <th>Total IOPS</th>
+          <th title="response time médio das leituras (ms)">Read latency</th>
+          <th title="response time médio das escritas (ms)">Write latency</th>
+          <th title="média ponderada por IOPS">Avg latency</th>
+          <th>Read kB/s</th>
+          <th>Write kB/s</th>
+          <th title="profundidade média da fila">aqu-sz</th>
+          <th>%util</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in data.physical_devices %}
+        <tr>
+          <td><strong>{{ d.device }}</strong></td>
+          <td>{{ "%.0f"|format(d.r_s) }}</td>
+          <td>{{ "%.0f"|format(d.w_s) }}</td>
+          <td><strong>{{ "%.0f"|format(d.total_iops) }}</strong></td>
+          <td class="{% if d.r_await >= 20 %}warn-text{% endif %}">{{ "%.2f"|format(d.r_await) }} ms</td>
+          <td class="{% if d.w_await >= 20 %}warn-text{% endif %}">{{ "%.2f"|format(d.w_await) }} ms</td>
+          <td>
+            <strong class="{% if d.avg_latency >= 20 %}warn-text{% elif d.avg_latency >= 10 %}{% endif %}">
+              {{ "%.2f"|format(d.avg_latency) }} ms
+            </strong>
+          </td>
+          <td>{{ "%.1f"|format(d.rkB_s) }}</td>
+          <td>{{ "%.1f"|format(d.wkB_s) }}</td>
+          <td>{{ "%.2f"|format(d.aqu_sz) }}</td>
+          <td>
+            <div class="bar {% if d.util >= 90 %}critical{% elif d.util >= 70 %}warn{% endif %}">
+              <span style="width: {{ [d.util,100]|min }}%"></span>
+            </div>
+            <span class="bar-value">{{ "%.1f"|format(d.util) }}%</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<section class="panel">
+  <p class="hint-inline">Nenhum disco físico detectado (esperado: <code>nvme*</code>, <code>sd*</code>, <code>vd*</code>, <code>hd*</code>, <code>xvd*</code>).</p>
+</section>
+{% endif %}
 
 <section class="panel">
   <h3>df — uso por filesystem</h3>

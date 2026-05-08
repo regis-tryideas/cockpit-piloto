@@ -347,6 +347,17 @@ def api_history(resource):
     window = request.args.get("window", "6h")
     seconds = WINDOW_PRESETS.get(window, 6 * 3600)
     rows = db.fetch_history(table, seconds)
+    if resource == "disk":
+        for r in rows:
+            ri = r.get("r_iops") or 0
+            wi = r.get("w_iops") or 0
+            total = ri + wi
+            r["total_iops"] = round(total, 2)
+            ra = r.get("r_await") or 0
+            wa = r.get("w_await") or 0
+            r["avg_latency"] = (
+                round((ra * ri + wa * wi) / total, 2) if total > 0 else 0.0
+            )
     return jsonify({"resource": resource, "window": window, "rows": rows})
 
 
@@ -359,6 +370,7 @@ def main():
     db.init()
     db.purge_expired_sessions()
     db.purge_history()
+    db.purge_non_physical_disks()
     sampler.start()
     host = os.environ.get("COCKPIT_HOST", "0.0.0.0")
     port = int(os.environ.get("COCKPIT_PORT", "6969"))
