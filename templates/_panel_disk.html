@@ -47,6 +47,9 @@
       {% if data.smart.available %}
         {{ data.smart.disks|length }} dispositivos · ✓ {{ data.smart.ok_count }} ·
         ✗ {{ data.smart.fail_count }} · ? {{ data.smart.unknown_count }}
+        {% if data.smart.controller_count %}
+          · {{ data.smart.controller_count }} atrás de controladora
+        {% endif %}
       {% else %}
         {{ data.smart.error }}
       {% endif %}
@@ -69,13 +72,21 @@
           {% elif s.passed is sameas false %}
             <span class="badge critical-bg" data-tip="O firmware do disco reportou FAILED — substitua o quanto antes!">FAILED</span>
           {% else %}
-            <span class="badge" data-tip="SMART não disponível ou device virtualizado">unknown</span>
+            <span class="badge" data-tip="SMART não disponível, device virtualizado ou exige driver específico">unknown</span>
           {% endif %}
           {% if s.is_nvme %}<span class="badge transport">NVMe</span>
           {% elif s.is_ssd %}<span class="badge">SSD</span>
           {% elif s.rotation_rate %}<span class="badge">{{ s.rotation_rate }} RPM</span>
           {% endif %}
+          {% if s.behind_controller %}
+            <span class="badge warn-bg" data-tip="Disco acessado através de uma controladora HW RAID (megaraid/cciss/3ware/etc). Tipo SMART: {{ s.type }}">controlled</span>
+          {% endif %}
         </h4>
+        {% if s.path or s.type %}
+        <div class="smart-path mono">
+          {{ s.path or '' }}{% if s.type %} · -d {{ s.type }}{% endif %}
+        </div>
+        {% endif %}
       </div>
 
       {% if s.error %}

@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -9,6 +10,32 @@ _CACHE_TTL = 60
 
 def has_smartctl() -> bool:
     return shutil.which("smartctl") is not None
+
+
+def _device_label(d: dict) -> str:
+    """Nome amigável do device.
+
+    /dev/sda [SAT]                          -> sda
+    /dev/bus/0 [megaraid_disk_00] [SAT]    -> megaraid_disk_00
+    /dev/twa0 [3ware_disk_0]                -> 3ware_disk_0
+    /dev/nvme0                              -> nvme0
+    """
+    name = d.get("name", "")
+    info = d.get("info_name") or name
+    m = re.search(r"\[([^\]]+_disk_\d+)\]", info)
+    if m:
+        return m.group(1)
+    if name.startswith("/dev/"):
+        return name[5:].replace("/", "_")
+    return name
+
+
+def _is_behind_controller(d: dict) -> bool:
+    """True se o disco está atrás de um controlador HW RAID."""
+    t = d.get("type") or ""
+    return any(t.startswith(p) for p in (
+        "megaraid", "cciss", "areca", "3ware", "aacraid", "hpsa", "hpt"
+    ))
 
 
 def _run_json(cmd: list[str], timeout: int = 8) -> dict | None:
@@ -27,11 +54,48 @@ def _run_json(cmd: list[str], timeout: int = 8) -> dict | None:
         return None
 
 
-def query_disk(dev: str) -> dict:
-    """Coleta SMART de um device. Trata os 3 grupos: NVMe, ATA, falhas."""
-    data = _run_json(["smartctl", "-aj", f"/dev/{dev}"], timeout=8)
+def scan_devices() -> list[dict]:
+    """smartctl --scan-open -j: enumera todos os devices com SMART acessível.
+
+    Inclui automaticamente discos atrás de controladoras HW (megaraid, cciss,
+    3ware, areca, hpsa, etc.) reportando o tipo correto a usar com -d.
+    """
+    data = _run_json(["smartctl", "--scan-open", "-j"], timeout=15)
     if not data:
-        return {"device": dev, "error": "smartctl não retornou JSON"}
+        return []
+    return data.get("devices", [])
+
+
+def query_disk(dev_or_descriptor, dtype: str | None = None) -> dict:
+    """Coleta SMART de um device.
+
+    Aceita:
+    - string nome simples: 'sda' (assume /dev/sda, tipo auto)
+    - string com path: '/dev/sda' (tipo auto)
+    - dict com {name, type, info_name} vindo de scan_devices()
+    """
+    if isinstance(dev_or_descriptor, dict):
+        path = dev_or_descriptor.get("name", "")
+        dtype = dev_or_descriptor.get("type") or dtype
+        label = _device_label(dev_or_descriptor)
+        behind_controller = _is_behind_controller(dev_or_descriptor)
+        protocol = dev_or_descriptor.get("protocol")
+    else:
+        name = str(dev_or_descriptor)
+        path = name if name.startswith("/dev/") else f"/dev/{name}"
+        label = name.split("/")[-1]
+        behind_controller = False
+        protocol = None
+
+    cmd = ["smartctl", "-aj", path]
+    if dtype:
+        cmd.extend(["-d", dtype])
+
+    data = _run_json(cmd, timeout=10)
+    if not data:
+        return {"device": label, "path": path, "type": dtype,
+                "behind_controller": behind_controller,
+                "error": "smartctl não retornou JSON"}
 
     sm = data.get("smartctl", {})
     exit_status = sm.get("exit_status")
@@ -42,7 +106,8 @@ def query_disk(dev: str) -> dict:
         err_msgs = [m.get("string", "") for m in messages
                     if m.get("severity") == "error"]
         return {
-            "device": dev,
+            "device": label, "path": path, "type": dtype,
+            "behind_controller": behind_controller,
             "error": "; ".join(err_msgs) or f"smartctl exit={exit_status}",
         }
 
@@ -50,7 +115,11 @@ def query_disk(dev: str) -> dict:
     smart_status = data.get("smart_status") or {}
 
     result = {
-        "device": dev,
+        "device": label,
+        "path": path,
+        "type": dtype,
+        "protocol": protocol,
+        "behind_controller": behind_controller,
         "model": data.get("model_name") or (data.get("device") or {}).get("model_name"),
         "serial": data.get("serial_number"),
         "firmware": data.get("firmware_version"),
@@ -196,7 +265,11 @@ def _list_physical_devices() -> list[str]:
 
 
 def collect(devices: list[str] | None = None) -> dict:
-    """Roda smartctl em todos os discos físicos. Resultados cacheados por 60s."""
+    """Roda smartctl em todos os discos descobertos via --scan-open.
+
+    Captura também discos atrás de controladoras HW (-d megaraid,N etc.).
+    Resultados cacheados por 60s.
+    """
     if not has_smartctl():
         return {
             "available": False,
@@ -210,13 +283,52 @@ def collect(devices: list[str] | None = None) -> dict:
     ):
         return _CACHE["data"]
 
-    devs = devices if devices is not None else _list_physical_devices()
     rows = []
-    for d in devs:
-        try:
-            rows.append(query_disk(d))
-        except Exception as e:
-            rows.append({"device": d, "error": f"exceção inesperada: {e}"})
+
+    if devices is not None:
+        # Modo manual: só os devices solicitados, com tipo auto
+        for d in devices:
+            try:
+                rows.append(query_disk(d))
+            except Exception as e:
+                rows.append({"device": str(d), "error": f"exceção: {e}"})
+    else:
+        scanned = scan_devices()
+        if scanned:
+            # Filtra: ignora discos virtuais sintéticos (RAID array exposto
+            # como /dev/sda quando há megaraid passthrough abaixo)
+            scanned_devs = []
+            has_controller = any(_is_behind_controller(d) for d in scanned)
+            for d in scanned:
+                # Se há disco atrás de controlador, pula o disco virtual
+                # exposto pelo controlador (geralmente /dev/sda com tipo 'sat').
+                # Heurística: se tipo é 'sat'/'ata' e info_name menciona
+                # produto típico de RAID controller, pula.
+                info = d.get("info_name", "")
+                if has_controller and not _is_behind_controller(d):
+                    if any(s in info for s in (
+                        "MegaRAID", "PERC", "Smart Array", "AACRAID",
+                        "3ware", "Areca",
+                    )):
+                        continue
+                scanned_devs.append(d)
+            for d in scanned_devs:
+                try:
+                    rows.append(query_disk(d))
+                except Exception as e:
+                    rows.append({
+                        "device": _device_label(d),
+                        "path": d.get("name"),
+                        "type": d.get("type"),
+                        "error": f"exceção: {e}",
+                    })
+        else:
+            # Fallback: smartctl muito antigo ou sem scan; usa /proc/diskstats
+            for name in _list_physical_devices():
+                try:
+                    rows.append(query_disk(name))
+                except Exception as e:
+                    rows.append({"device": name, "error": f"exceção: {e}"})
 
     summary = {
         "available": True,
@@ -224,6 +336,7 @@ def collect(devices: list[str] | None = None) -> dict:
         "ok_count": sum(1 for r in rows if r.get("passed") is True),
         "fail_count": sum(1 for r in rows if r.get("passed") is False),
         "unknown_count": sum(1 for r in rows if r.get("passed") is None),
+        "controller_count": sum(1 for r in rows if r.get("behind_controller")),
     }
 
     if devices is None:

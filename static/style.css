@@ -795,6 +795,11 @@ tr.vm-stopped { opacity: 0.5; }
   gap: 8px;
   flex-wrap: wrap;
 }
+.smart-path {
+  font-size: 11px;
+  color: #6e7681;
+  margin-top: 4px;
+}
 .smart-info {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
