@@ -14,8 +14,8 @@
   <div class="hist-header">
     <h3>{{ title }} <small>(últimas 72h máx)</small></h3>
     <div class="window-picker" data-target="{{ slot_id }}">
-      <button data-window="1h">1h</button>
-      <button data-window="6h" class="active">6h</button>
+      <button data-window="1h" class="active">1h</button>
+      <button data-window="6h">6h</button>
       <button data-window="24h">24h</button>
       <button data-window="72h">72h</button>
     </div>
@@ -116,7 +116,7 @@
       }
 
       // Janela ativa (mantida para o auto-refresh)
-      let currentWindow = "6h";
+      let currentWindow = "1h";
 
       // Bind window picker
       const picker = document.querySelector(`.window-picker[data-target="${id}"]`);
