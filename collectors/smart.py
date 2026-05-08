@@ -3,9 +3,28 @@ import re
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 _CACHE = {"data": None, "ts": 0}
 _CACHE_TTL = 60
+
+# Mapeamento driver kernel (proc_name em /sys/class/scsi_host) → tipo smartctl
+PROC_NAME_TO_SMART_TYPE = {
+    "megaraid_sas": "megaraid",
+    "megaraid": "megaraid",
+    "mpt3sas": "megaraid",
+    "cciss": "cciss",
+    "hpsa": "cciss",
+    "3w-9xxx": "3ware",
+    "3w-sas": "3ware",
+    "3w-xxxx": "3ware",
+    "arcmsr": "areca",
+    "aacraid": "aacraid",
+}
+# Quantos índices a tentar antes de desistir (cobre LSI 24-port + folga)
+MAX_CONTROLLER_INDEX = 32
+# Falhas consecutivas que indicam fim da numeração
+CONTROLLER_FAIL_STREAK = 3
 
 
 def has_smartctl() -> bool:
@@ -64,6 +83,113 @@ def scan_devices() -> list[dict]:
     if not data:
         return []
     return data.get("devices", [])
+
+
+def detect_raid_controllers() -> list[dict]:
+    """Detecta controladoras HW RAID via /sys/class/scsi_host/*/proc_name.
+
+    Retorna lista de {host, proc_name, smart_type, base_paths} pra cada
+    controladora encontrada — usada pra enumeração manual via -d <type>,N
+    quando --scan-open não pega tudo.
+    """
+    found = []
+    base = Path("/sys/class/scsi_host")
+    if not base.exists():
+        return []
+
+    seen_types = set()
+    for host_dir in sorted(base.iterdir()):
+        proc_file = host_dir / "proc_name"
+        if not proc_file.exists():
+            continue
+        try:
+            proc_name = proc_file.read_text().strip().lower()
+        except OSError:
+            continue
+        smart_type = PROC_NAME_TO_SMART_TYPE.get(proc_name)
+        if not smart_type:
+            continue
+        if smart_type in seen_types:
+            continue  # evita repetir enumeração quando há vários hosts do mesmo driver
+        seen_types.add(smart_type)
+
+        # Caminhos típicos onde smartctl recebe o -d <type>,N:
+        #  - megaraid: /dev/bus/0, /dev/bus/1, ... ou /dev/sda
+        #  - cciss/hpsa: /dev/sda (controlador expõe um único nó)
+        #  - 3ware: /dev/twa0 ou /dev/sda
+        #  - areca: /dev/sg2
+        bases = _candidate_base_paths(smart_type)
+        found.append({
+            "host": host_dir.name,
+            "proc_name": proc_name,
+            "smart_type": smart_type,
+            "base_paths": bases,
+        })
+    return found
+
+
+def _candidate_base_paths(smart_type: str) -> list[str]:
+    """Caminhos prováveis pra usar com -d <smart_type>,N."""
+    paths = []
+    if smart_type == "megaraid":
+        for n in range(0, 8):
+            p = f"/dev/bus/{n}"
+            if Path(p).exists():
+                paths.append(p)
+    if smart_type == "areca":
+        for sg in Path("/dev").glob("sg*"):
+            paths.append(str(sg))
+    if smart_type == "3ware":
+        for n in range(0, 4):
+            p = f"/dev/twa{n}"
+            if Path(p).exists():
+                paths.append(p)
+            p2 = f"/dev/twe{n}"
+            if Path(p2).exists():
+                paths.append(p2)
+    # cciss/hpsa e fallback geral: /dev/sda costuma funcionar
+    if not paths or smart_type in ("cciss", "aacraid"):
+        for letter in "abcdefghijklmnop":
+            p = f"/dev/sd{letter}"
+            if Path(p).exists():
+                paths.append(p)
+                break  # 1 base é suficiente; o índice -d N varia
+    return paths or ["/dev/sda"]
+
+
+def enumerate_controller_disks(controller: dict) -> list[dict]:
+    """Para cada base_path do controller, tenta -d <type>,0..N até falhas
+    consecutivas indicarem fim da numeração."""
+    smart_type = controller["smart_type"]
+    out = []
+    seen_serials = set()
+    for base_path in controller["base_paths"]:
+        fails = 0
+        for idx in range(MAX_CONTROLLER_INDEX):
+            dtype = f"{smart_type},{idx}"
+            descriptor = {
+                "name": base_path,
+                "type": dtype,
+                "info_name": f"{base_path} [{smart_type}_disk_{idx:02d}]",
+            }
+            r = query_disk(descriptor)
+            has_data = bool(r.get("model"))
+            if has_data:
+                # Deduplica por serial (caso o mesmo disco apareça em paths
+                # diferentes do mesmo controller)
+                sn = r.get("serial")
+                if sn and sn in seen_serials:
+                    fails += 1
+                else:
+                    if sn:
+                        seen_serials.add(sn)
+                    out.append(r)
+                    fails = 0
+            else:
+                fails += 1
+            if fails >= CONTROLLER_FAIL_STREAK:
+                break
+    return out
 
 
 def query_disk(dev_or_descriptor, dtype: str | None = None) -> dict:
@@ -284,51 +410,74 @@ def collect(devices: list[str] | None = None) -> dict:
         return _CACHE["data"]
 
     rows = []
+    controllers_used = []
 
     if devices is not None:
-        # Modo manual: só os devices solicitados, com tipo auto
         for d in devices:
             try:
                 rows.append(query_disk(d))
             except Exception as e:
                 rows.append({"device": str(d), "error": f"exceção: {e}"})
     else:
+        controllers = detect_raid_controllers()
         scanned = scan_devices()
-        if scanned:
-            # Filtra: ignora discos virtuais sintéticos (RAID array exposto
-            # como /dev/sda quando há megaraid passthrough abaixo)
-            scanned_devs = []
-            has_controller = any(_is_behind_controller(d) for d in scanned)
+        scan_caught_controller = any(_is_behind_controller(d) for d in scanned)
+
+        # 1) Discos diretos (não-controlados) do --scan-open
+        for d in scanned:
+            if _is_behind_controller(d):
+                continue
+            info = d.get("info_name", "")
+            # Pula disco virtual exposto pelo controller quando o scan
+            # JÁ enxergou os discos físicos atrás (caso típico megaraid)
+            if scan_caught_controller and any(s in info for s in (
+                "MegaRAID", "PERC", "Smart Array", "AACRAID", "3ware", "Areca",
+            )):
+                continue
+            try:
+                rows.append(query_disk(d))
+            except Exception as e:
+                rows.append({
+                    "device": _device_label(d), "path": d.get("name"),
+                    "type": d.get("type"),
+                    "error": f"exceção: {e}",
+                })
+
+        # 2) Discos atrás de controladora — pega via scan-open + enum manual
+        if scan_caught_controller:
             for d in scanned:
-                # Se há disco atrás de controlador, pula o disco virtual
-                # exposto pelo controlador (geralmente /dev/sda com tipo 'sat').
-                # Heurística: se tipo é 'sat'/'ata' e info_name menciona
-                # produto típico de RAID controller, pula.
-                info = d.get("info_name", "")
-                if has_controller and not _is_behind_controller(d):
-                    if any(s in info for s in (
-                        "MegaRAID", "PERC", "Smart Array", "AACRAID",
-                        "3ware", "Areca",
-                    )):
-                        continue
-                scanned_devs.append(d)
-            for d in scanned_devs:
-                try:
-                    rows.append(query_disk(d))
-                except Exception as e:
-                    rows.append({
-                        "device": _device_label(d),
-                        "path": d.get("name"),
-                        "type": d.get("type"),
-                        "error": f"exceção: {e}",
-                    })
+                if _is_behind_controller(d):
+                    try:
+                        rows.append(query_disk(d))
+                    except Exception as e:
+                        rows.append({
+                            "device": _device_label(d), "path": d.get("name"),
+                            "type": d.get("type"),
+                            "error": f"exceção: {e}",
+                        })
         else:
-            # Fallback: smartctl muito antigo ou sem scan; usa /proc/diskstats
+            # scan-open não enxergou os discos atrás do controlador —
+            # enumera manualmente via -d <type>,0..N
+            for ctrl in controllers:
+                controllers_used.append(ctrl)
+                rows.extend(enumerate_controller_disks(ctrl))
+
+        # 3) Fallback se nada veio: tenta /proc/diskstats com tipo auto
+        if not rows and not scanned and not controllers:
             for name in _list_physical_devices():
                 try:
                     rows.append(query_disk(name))
                 except Exception as e:
                     rows.append({"device": name, "error": f"exceção: {e}"})
+
+    # Filtra: descarta discos sem modelo (lixo de virtio, scan vazio, etc.)
+    # mas preserva os FAILED mesmo sem modelo, pra não esconder problema.
+    def _keep(r):
+        return bool(r.get("model")) or r.get("passed") is False
+
+    raw_count = len(rows)
+    rows = [r for r in rows if _keep(r)]
+    discarded = raw_count - len(rows)
 
     summary = {
         "available": True,
@@ -337,6 +486,8 @@ def collect(devices: list[str] | None = None) -> dict:
         "fail_count": sum(1 for r in rows if r.get("passed") is False),
         "unknown_count": sum(1 for r in rows if r.get("passed") is None),
         "controller_count": sum(1 for r in rows if r.get("behind_controller")),
+        "controllers_detected": [c["smart_type"] for c in controllers_used],
+        "discarded_no_model": discarded,
     }
 
     if devices is None:

@@ -50,6 +50,12 @@
         {% if data.smart.controller_count %}
           · {{ data.smart.controller_count }} atrás de controladora
         {% endif %}
+        {% if data.smart.controllers_detected %}
+          · enumerado via -d {{ data.smart.controllers_detected|join(', ') }}
+        {% endif %}
+        {% if data.smart.discarded_no_model %}
+          · {{ data.smart.discarded_no_model }} entrada(s) sem modelo descartadas
+        {% endif %}
       {% else %}
         {{ data.smart.error }}
       {% endif %}
