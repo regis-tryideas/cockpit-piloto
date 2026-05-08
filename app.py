@@ -45,6 +45,28 @@ def _format_ts(ts):
     return datetime.datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+@app.template_filter("format_latency_ns")
+def _format_latency_ns(ns):
+    """Formata nanosegundos escolhendo a unidade mais legível: ns/µs/ms/s."""
+    if ns is None:
+        return "—"
+    try:
+        ns = int(ns)
+    except (TypeError, ValueError):
+        return "—"
+    if ns == 0:
+        return "0"
+    sign = "-" if ns < 0 else ""
+    n = abs(ns)
+    if n >= 1_000_000_000:
+        return f"{sign}{n/1_000_000_000:.2f} s"
+    if n >= 1_000_000:
+        return f"{sign}{n/1_000_000:.2f} ms"
+    if n >= 1_000:
+        return f"{sign}{n/1_000:.2f} µs"
+    return f"{sign}{n} ns"
+
+
 @app.before_request
 def load_session():
     token = request.cookies.get(SESSION_COOKIE)

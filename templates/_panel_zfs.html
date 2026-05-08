@@ -352,7 +352,7 @@
 {# ---------- Latência ---------- #}
 {% if data.latency %}
 <section class="panel">
-  <h3>Latências por pool <small>(ns)</small></h3>
+  <h3>Latências por pool <small>(unidade adaptativa: ns / µs / ms)</small></h3>
   <div class="table-wrap">
     <table>
       <thead>
@@ -370,12 +370,12 @@
         {% for l in data.latency %}
         <tr>
           <td><strong>{{ l.name }}</strong></td>
-          <td>{{ '{:,}'.format(l.total_wait_read_ns) }}</td>
-          <td>{{ '{:,}'.format(l.total_wait_write_ns) }}</td>
-          <td>{{ '{:,}'.format(l.disk_wait_read_ns) }}</td>
-          <td>{{ '{:,}'.format(l.disk_wait_write_ns) }}</td>
-          <td>{{ '{:,}'.format(l.syncq_wait_read_ns) }}</td>
-          <td>{{ '{:,}'.format(l.syncq_wait_write_ns) }}</td>
+          <td>{{ l.total_wait_read_ns | format_latency_ns }}</td>
+          <td>{{ l.total_wait_write_ns | format_latency_ns }}</td>
+          <td>{{ l.disk_wait_read_ns | format_latency_ns }}</td>
+          <td>{{ l.disk_wait_write_ns | format_latency_ns }}</td>
+          <td>{{ l.syncq_wait_read_ns | format_latency_ns }}</td>
+          <td>{{ l.syncq_wait_write_ns | format_latency_ns }}</td>
         </tr>
         {% endfor %}
       </tbody>
