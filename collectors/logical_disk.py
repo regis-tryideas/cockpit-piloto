@@ -98,17 +98,29 @@ def _iostat_for(devices: set[str], interval: int) -> dict[str, dict]:
     result = {}
     for d in rows:
         name = d.get("disk_device")
-        if name in devices:
-            result[name] = {
-                "r_s": d.get("r/s", 0.0),
-                "w_s": d.get("w/s", 0.0),
-                "rkB_s": d.get("rkB/s", 0.0),
-                "wkB_s": d.get("wkB/s", 0.0),
-                "r_await": d.get("r_await", 0.0),
-                "w_await": d.get("w_await", 0.0),
-                "aqu_sz": d.get("aqu-sz", 0.0),
-                "util": d.get("util", 0.0),
-            }
+        if name not in devices:
+            continue
+        r_s = d.get("r/s", 0.0)
+        w_s = d.get("w/s", 0.0)
+        r_await = d.get("r_await", 0.0)
+        w_await = d.get("w_await", 0.0)
+        total_iops = r_s + w_s
+        avg_latency = (
+            (r_await * r_s + w_await * w_s) / total_iops
+            if total_iops > 0 else 0.0
+        )
+        result[name] = {
+            "r_s": r_s,
+            "w_s": w_s,
+            "total_iops": total_iops,
+            "rkB_s": d.get("rkB/s", 0.0),
+            "wkB_s": d.get("wkB/s", 0.0),
+            "r_await": r_await,
+            "w_await": w_await,
+            "avg_latency": round(avg_latency, 2),
+            "aqu_sz": d.get("aqu-sz", 0.0),
+            "util": d.get("util", 0.0),
+        }
     return result
 
 

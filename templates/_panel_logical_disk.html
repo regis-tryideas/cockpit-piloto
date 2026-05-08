@@ -68,18 +68,28 @@
   <table>
     <thead>
       <tr>
-        <th>r/s</th><th>w/s</th><th>rkB/s</th><th>wkB/s</th>
-        <th>r_await</th><th>w_await</th><th>aqu-sz</th><th>%util</th>
+        <th title="IOPS de leitura">Read IOPS</th>
+        <th>Write IOPS</th>
+        <th>Total IOPS</th>
+        <th title="response time médio das leituras (ms)">Read latency</th>
+        <th>Write latency</th>
+        <th title="média ponderada por IOPS">Avg latency</th>
+        <th>Read kB/s</th>
+        <th>Write kB/s</th>
+        <th title="profundidade média da fila">aqu-sz</th>
+        <th>%util</th>
       </tr>
     </thead>
     <tbody>
       <tr>
-        <td>{{ "%.2f"|format(d.io.r_s) }}</td>
-        <td>{{ "%.2f"|format(d.io.w_s) }}</td>
+        <td>{{ "%.0f"|format(d.io.r_s) }}</td>
+        <td>{{ "%.0f"|format(d.io.w_s) }}</td>
+        <td><strong>{{ "%.0f"|format(d.io.total_iops) }}</strong></td>
+        <td class="{% if d.io.r_await >= 20 %}warn-text{% endif %}">{{ "%.2f"|format(d.io.r_await) }} ms</td>
+        <td class="{% if d.io.w_await >= 20 %}warn-text{% endif %}">{{ "%.2f"|format(d.io.w_await) }} ms</td>
+        <td><strong class="{% if d.io.avg_latency >= 20 %}warn-text{% endif %}">{{ "%.2f"|format(d.io.avg_latency) }} ms</strong></td>
         <td>{{ "%.1f"|format(d.io.rkB_s) }}</td>
         <td>{{ "%.1f"|format(d.io.wkB_s) }}</td>
-        <td>{{ "%.2f"|format(d.io.r_await) }}</td>
-        <td>{{ "%.2f"|format(d.io.w_await) }}</td>
         <td>{{ "%.2f"|format(d.io.aqu_sz) }}</td>
         <td>
           <div class="bar {% if d.io.util >= 90 %}critical{% elif d.io.util >= 70 %}warn{% endif %}">
