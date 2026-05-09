@@ -285,6 +285,21 @@
     });
   }
 
+  // Sincroniza min/max do eixo X de um chart "source" para os demais
+  let syncing = false;
+  function syncZoomFrom(sourceChart){
+    if (syncing) return;
+    syncing = true;
+    try {
+      const x = sourceChart.scales.x;
+      const range = { min: x.min, max: x.max };
+      Object.values(charts).forEach(c => {
+        if (!c || c === sourceChart) return;
+        c.zoomScale('x', range, 'none');
+      });
+    } finally { syncing = false; }
+  }
+
   function makeChart(canvasId, datasets, yLabel){
     const ctx = document.getElementById(canvasId).getContext('2d');
     return new Chart(ctx, {
@@ -304,8 +319,12 @@
                 borderWidth: 1,
               },
               mode: 'x',
+              onZoomComplete: ({chart}) => syncZoomFrom(chart),
             },
-            pan: { enabled: true, mode: 'x', modifierKey: 'shift' },
+            pan: {
+              enabled: true, mode: 'x', modifierKey: 'shift',
+              onPanComplete: ({chart}) => syncZoomFrom(chart),
+            },
             limits: { x: { minRange: 60_000 } },
           },
         },
@@ -462,7 +481,10 @@
   });
 
   document.getElementById('vm-zoom-reset').addEventListener('click', () => {
-    Object.values(charts).forEach(c => c && c.resetZoom && c.resetZoom());
+    syncing = true;
+    try {
+      Object.values(charts).forEach(c => c && c.resetZoom && c.resetZoom());
+    } finally { syncing = false; }
   });
 })();
 </script>
