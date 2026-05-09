@@ -31,12 +31,22 @@
 
 {{ history_block(
   'disk-throughput-chart',
-  'Throughput (kB/s) — read e write somados',
+  'Throughput de leitura',
   'disk',
   '[
     {"label":"read","key":"r_kbs","groupBy":"device"}
   ]',
-  y_label='kB/s'
+  y_label='B/s', value_format='kbytes_per_sec'
+) }}
+
+{{ history_block(
+  'disk-throughput-w-chart',
+  'Throughput de escrita',
+  'disk',
+  '[
+    {"label":"write","key":"w_kbs","groupBy":"device"}
+  ]',
+  y_label='B/s', value_format='kbytes_per_sec'
 ) }}
 
 {# ---------- Saúde SMART ---------- #}

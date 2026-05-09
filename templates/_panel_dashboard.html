@@ -210,9 +210,9 @@
 ) }}
 
 {{ history_block(
-  'dash-net-chart', 'Rede RX (kB/s)', 'net',
+  'dash-net-chart', 'Rede RX por interface', 'net',
   '[{"label":"RX","key":"rx_kbps","groupBy":"iface"}]',
-  y_label='kB/s'
+  y_label='B/s', value_format='kbytes_per_sec'
 ) }}
 </div>
 

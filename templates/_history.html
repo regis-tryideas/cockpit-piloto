@@ -9,7 +9,7 @@
      - y_label (opcional): label do eixo Y
 #}
 
-{% macro history_block(slot_id, title, resource, series_json, y_max=None, y_label=None) %}
+{% macro history_block(slot_id, title, resource, series_json, y_max=None, y_label=None, value_format=None) %}
 <section class="panel">
   <div class="hist-header">
     <h3>{{ title }} <small>(últimas 72h máx)</small></h3>
@@ -28,7 +28,7 @@
     <canvas id="{{ slot_id }}"></canvas>
   </div>
   <script type="application/json" id="{{ slot_id }}-cfg">
-    {"resource": "{{ resource }}", "series": {{ series_json|safe }}{% if y_max %}, "yMax": {{ y_max }}{% endif %}{% if y_label %}, "yLabel": "{{ y_label }}"{% endif %} }
+    {"resource": "{{ resource }}", "series": {{ series_json|safe }}{% if y_max %}, "yMax": {{ y_max }}{% endif %}{% if y_label %}, "yLabel": "{{ y_label }}"{% endif %}{% if value_format %}, "valueFormat": "{{ value_format }}"{% endif %} }
   </script>
   <script>
     (function(){
@@ -37,6 +37,39 @@
       const canvas = document.getElementById(id);
       const ctx = canvas.getContext("2d");
       let chart = null;
+
+      // Formatador adaptativo: converte um valor para B/kB/MB/GB/TB conforme magnitude.
+      // valueFormat reconhecido:
+      //   'bytes'           — valor já em bytes
+      //   'bytes_per_sec'   — valor em B/s (anexa /s)
+      //   'kbytes_per_sec'  — valor em kB/s (multiplica por 1024 antes; anexa /s)
+      function fmtBytes(v, vf){
+        if (v == null || isNaN(v)) return "—";
+        const perSec = vf && vf.endsWith("_per_sec");
+        let n = Math.abs(v);
+        if (vf === "kbytes_per_sec") n *= 1024;
+        const sign = v < 0 ? "-" : "";
+        const units = ["B", "kB", "MB", "GB", "TB", "PB"];
+        let i = 0;
+        while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+        const decimals = i === 0 ? 0 : 2;
+        return `${sign}${n.toFixed(decimals)} ${units[i]}${perSec ? "/s" : ""}`;
+      }
+      function fmtCount(v){
+        if (v == null || isNaN(v)) return "—";
+        if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(2) + "M";
+        if (Math.abs(v) >= 1e3) return (v/1e3).toFixed(2) + "k";
+        return Number(v).toLocaleString();
+      }
+      function applyFormat(v){
+        const vf = cfg.valueFormat;
+        if (!vf) return Number(v).toFixed(2);
+        if (vf === "bytes" || vf === "bytes_per_sec" || vf === "kbytes_per_sec") {
+          return fmtBytes(v, vf);
+        }
+        if (vf === "count") return fmtCount(v);
+        return Number(v).toFixed(2);
+      }
 
       async function load(window){
         const r = await fetch(`/api/history/${cfg.resource}?window=${window}`,
@@ -97,7 +130,15 @@
             interaction: { mode: "index", intersect: false },
             plugins: {
               legend: { labels: { color: "#c9d1d9", boxWidth: 12 } },
-              tooltip: { mode: "index", intersect: false },
+              tooltip: {
+                mode: "index", intersect: false,
+                callbacks: {
+                  label: (ctx) => {
+                    const v = ctx.parsed.y;
+                    return `${ctx.dataset.label}: ${applyFormat(v)}`;
+                  },
+                },
+              },
               zoom: {
                 zoom: {
                   drag: {
@@ -121,7 +162,10 @@
               },
               y: Object.assign(
                 {
-                  ticks: { color: "#8b949e" },
+                  ticks: {
+                    color: "#8b949e",
+                    callback: (v) => cfg.valueFormat ? applyFormat(v) : v,
+                  },
                   grid: { color: "#21262d" },
                 },
                 cfg.yMax !== undefined ? { max: cfg.yMax } : {},

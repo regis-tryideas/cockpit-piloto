@@ -3,7 +3,13 @@
 {% block body %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<script>
+  // Garante registro do plugin se o build não auto-registrou
+  if (window.Chart && window.ChartZoom && !window.Chart.registry.plugins.get('zoom')) {
+    window.Chart.register(window.ChartZoom);
+  }
+</script>
 <header class="topbar">
   <div class="brand">
     <span class="brand-name">{{ version_info.name }}</span>

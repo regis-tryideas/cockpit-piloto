@@ -10,7 +10,7 @@
   'Recebido (RX) por interface',
   'net',
   '[{"label":"RX","key":"rx_kbps","groupBy":"iface"}]',
-  y_label='kB/s'
+  y_label='B/s', value_format='kbytes_per_sec'
 ) }}
 
 {{ history_block(
@@ -18,7 +18,7 @@
   'Enviado (TX) por interface',
   'net',
   '[{"label":"TX","key":"tx_kbps","groupBy":"iface"}]',
-  y_label='kB/s'
+  y_label='B/s', value_format='kbytes_per_sec'
 ) }}
 
 {{ explainer('Como ler estas métricas', [
