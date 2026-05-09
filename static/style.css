@@ -941,6 +941,81 @@ body.modal-open { overflow: hidden; }
   font-weight: 600;
 }
 
+/* Replication form */
+.repl-form fieldset {
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  padding: 10px 14px 14px;
+  margin: 12px 0;
+}
+.repl-form legend {
+  color: #58a6ff;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  padding: 0 6px;
+}
+.repl-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+.repl-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 160px;
+}
+.repl-form label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  flex: 0;
+  min-width: auto;
+}
+.repl-form input[type="text"],
+.repl-form input[type="number"],
+.repl-form select {
+  padding: 6px 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #e6edf3;
+  border-radius: 6px;
+  font: inherit;
+}
+.repl-form button[type="submit"] {
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 6px;
+  background: #238636;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  margin-top: 8px;
+}
+.repl-form button:hover { background: #2ea043; }
+
+.btn-small {
+  padding: 4px 9px;
+  border: 1px solid #30363d;
+  background: #21262d;
+  color: #c9d1d9;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.btn-small:hover { background: #30363d; }
+.btn-small.secondary { background: #0d1117; }
+.btn-small.danger { color: #f85149; border-color: #b62324; }
+.btn-small.danger:hover { background: rgba(248,81,73,.15); }
+
+tr.runs-row td { background: #0d1117; padding: 6px 14px; }
+.sub-table { font-size: 11px; margin-top: 6px; }
+.sub-table td { padding: 4px 8px; }
+
 /* Explainer (collapsible "como ler") */
 .explainer {
   background: #0d1117;

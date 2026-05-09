@@ -112,6 +112,44 @@ def init():
                 fd_allocated INTEGER, fd_used_pct REAL
             );
 
+            CREATE TABLE IF NOT EXISTS replication_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                source_vg TEXT NOT NULL,
+                source_thin_pool TEXT NOT NULL,
+                source_lv TEXT NOT NULL,
+                dest_kind TEXT NOT NULL,        -- 'ssh' | 'pve'
+                dest_host TEXT NOT NULL,
+                dest_user TEXT NOT NULL DEFAULT 'root',
+                dest_vg TEXT NOT NULL,
+                dest_thin_pool TEXT NOT NULL,
+                dest_lv TEXT NOT NULL,
+                schedule TEXT,                  -- crontab-like; null = manual
+                enabled INTEGER NOT NULL DEFAULT 1,
+                keep_snapshots INTEGER NOT NULL DEFAULT 3,
+                last_snapshot TEXT,             -- nome do último snapshot enviado com sucesso
+                last_run_at INTEGER,
+                last_run_status TEXT,           -- 'ok' | 'error' | null
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS replication_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                started_at INTEGER NOT NULL,
+                finished_at INTEGER,
+                status TEXT NOT NULL,           -- 'running' | 'ok' | 'error'
+                bytes_sent INTEGER,
+                error_message TEXT,
+                snapshot_name TEXT,
+                mode TEXT,                      -- 'full' | 'incremental'
+                FOREIGN KEY (job_id) REFERENCES replication_jobs(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_repl_runs_job
+                ON replication_runs(job_id, started_at);
+
             CREATE TABLE IF NOT EXISTS metrics_pve_vm (
                 ts INTEGER NOT NULL,
                 vmid INTEGER NOT NULL,

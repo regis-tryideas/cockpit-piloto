@@ -1,0 +1,258 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import explainer %}
+{% block panel %}
+
+{% with msgs = get_flashed_messages(with_categories=false) %}
+{% for kind, txt in msgs %}
+<div class="flash flash-{{ kind }}">{{ txt }}</div>
+{% endfor %}
+{% endwith %}
+
+{# ---------- Status do host ---------- #}
+<section class="summary-cards">
+  <div class="card">
+    <div class="card-label">LVM</div>
+    <div class="card-value small">
+      {% if data.lvm.available %}
+        <span class="badge ok">disponível</span>
+      {% else %}
+        <span class="badge critical-bg">indisponível</span>
+      {% endif %}
+    </div>
+    <div class="card-foot">{{ data.lvm.vgs|length if data.lvm.available else 0 }} VG(s)</div>
+  </div>
+  <div class="card">
+    <div class="card-label">thin-provisioning-tools</div>
+    <div class="card-value small">
+      {% if data.lvm.thin_tools %}
+        <span class="badge ok">presente</span>
+      {% else %}
+        <span class="badge warn-bg">ausente</span>
+      {% endif %}
+    </div>
+    <div class="card-foot">thin_send / thin_recv / thin_delta</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Thin pools</div>
+    <div class="card-value">{{ data.lvm.thin_pools|length if data.lvm.available else 0 }}</div>
+    <div class="card-foot">elegíveis para replicação</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Jobs configurados</div>
+    <div class="card-value">{{ data.jobs|length }}</div>
+    <div class="card-foot">{{ data.jobs|selectattr('enabled')|list|length }} habilitados</div>
+  </div>
+</section>
+
+{% if not data.lvm.available %}
+<section class="panel">
+  <div class="alert">{{ data.lvm.error }}</div>
+</section>
+{% elif not data.lvm.thin_tools %}
+<section class="panel">
+  <div class="alert">
+    <strong>Faltam ferramentas thin no host:</strong> instale com
+    <code>apt install -y thin-provisioning-tools</code>. Sem elas, o
+    mecanismo de delta incremental não funciona.
+  </div>
+</section>
+{% endif %}
+
+{# ---------- Topologia LVM detectada ---------- #}
+{% if data.lvm.available and data.lvm.thin_pools %}
+<section class="panel">
+  <h3>Thin pools disponíveis no host</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>VG</th><th>Pool</th><th>Tamanho</th><th>Data %</th><th>Metadata %</th></tr>
+      </thead>
+      <tbody>
+        {% for p in data.lvm.thin_pools %}
+        <tr>
+          <td><span class="mono">{{ p.vg }}</span></td>
+          <td><strong class="mono">{{ p.name }}</strong></td>
+          <td>{{ p.size_b | format_bytes }}</td>
+          <td>
+            <div class="bar {% if p.data_pct >= 90 %}critical{% elif p.data_pct >= 75 %}warn{% endif %}">
+              <span style="width: {{ [p.data_pct,100]|min }}%"></span>
+            </div>
+            <span class="bar-value">{{ "%.1f"|format(p.data_pct) }}%</span>
+          </td>
+          <td>{{ "%.1f"|format(p.metadata_pct) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- Jobs ---------- #}
+<section class="panel">
+  <h3>Jobs de replicação</h3>
+  {% if not data.jobs %}
+  <p class="hint-inline">Nenhum job configurado. Crie um abaixo.</p>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Nome</th>
+          <th>Origem</th>
+          <th>Destino</th>
+          <th>Schedule</th>
+          <th>Última execução</th>
+          <th>Status</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for j in data.jobs %}
+        <tr>
+          <td><strong>{{ j.name }}</strong>
+            {% if not j.enabled %}<span class="badge">disabled</span>{% endif %}
+          </td>
+          <td class="mono">
+            {{ j.source_vg }}/{{ j.source_thin_pool }}/{{ j.source_lv }}
+          </td>
+          <td class="mono">
+            {{ j.dest_user }}@{{ j.dest_host }}<br>
+            <small>{{ j.dest_vg }}/{{ j.dest_thin_pool }}/{{ j.dest_lv }}</small>
+          </td>
+          <td><span class="mono">{{ j.schedule or '—' }}</span></td>
+          <td>
+            {% if j.last_run_at %}{{ j.last_run_at | format_ts }}{% else %}—{% endif %}
+          </td>
+          <td>
+            {% if j.last_run_status == 'ok' %}
+              <span class="badge ok">ok</span>
+            {% elif j.last_run_status == 'error' %}
+              <span class="badge critical-bg" title="{{ j.last_error }}">erro</span>
+            {% else %}
+              <span class="badge">nunca</span>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('run_replication_job', job_id=j.id) }}"
+                  style="display:inline" onsubmit="return confirm('Executar job {{ j.name }} agora?')">
+              <button type="submit" class="btn-small">▶ Run</button>
+            </form>
+            <form method="post" action="{{ url_for('test_replication_job', job_id=j.id) }}"
+                  style="display:inline">
+              <button type="submit" class="btn-small secondary">test</button>
+            </form>
+            <form method="post" action="{{ url_for('delete_replication_job', job_id=j.id) }}"
+                  style="display:inline" onsubmit="return confirm('Remover job {{ j.name }}? Snapshots na origem permanecem.')">
+              <button type="submit" class="btn-small danger">×</button>
+            </form>
+          </td>
+        </tr>
+        {% if data.runs_by_job[j.id] %}
+        <tr class="runs-row">
+          <td colspan="7">
+            <details>
+              <summary>Últimos 5 runs</summary>
+              <table class="sub-table">
+                <thead><tr>
+                  <th>Quando</th><th>Modo</th><th>Status</th><th>Bytes</th><th>Snap</th><th>Erro</th>
+                </tr></thead>
+                <tbody>
+                {% for r in data.runs_by_job[j.id] %}
+                <tr>
+                  <td class="mono">{{ r.started_at | format_ts }}</td>
+                  <td>{{ r.mode or '—' }}</td>
+                  <td>
+                    {% if r.status == 'ok' %}<span class="badge ok">ok</span>
+                    {% elif r.status == 'error' %}<span class="badge critical-bg">error</span>
+                    {% else %}<span class="badge warn-bg">{{ r.status }}</span>{% endif %}
+                  </td>
+                  <td>{{ r.bytes_sent | format_bytes }}</td>
+                  <td class="mono">{{ r.snapshot_name or '—' }}</td>
+                  <td class="warn-text">{{ r.error_message or '' }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </details>
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- Form criar job ---------- #}
+{% if data.lvm.available %}
+<section class="panel">
+  <h3>Adicionar job</h3>
+  <form method="post" action="{{ url_for('create_replication_job') }}" class="repl-form">
+    <div class="repl-form-row">
+      <label>
+        <span class="filter-label">Nome</span>
+        <input type="text" name="name" required placeholder="ex: vm100-to-pve02">
+      </label>
+      <label>
+        <span class="filter-label">Schedule (opcional)</span>
+        <input type="text" name="schedule" placeholder="ex: */15 * * * * (manual em branco)">
+      </label>
+      <label>
+        <span class="filter-label">Manter N snapshots</span>
+        <input type="number" name="keep_snapshots" value="3" min="1" max="20">
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" name="enabled" checked> habilitado
+      </label>
+    </div>
+
+    <fieldset>
+      <legend>Origem (este host)</legend>
+      <div class="repl-form-row">
+        <label><span class="filter-label">VG</span><input type="text" name="source_vg" required placeholder="pve"></label>
+        <label><span class="filter-label">Thin pool</span><input type="text" name="source_thin_pool" required placeholder="data"></label>
+        <label><span class="filter-label">LV</span><input type="text" name="source_lv" required placeholder="vm-100-disk-0"></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Destino</legend>
+      <div class="repl-form-row">
+        <label>
+          <span class="filter-label">Tipo</span>
+          <select name="dest_kind">
+            <option value="ssh">SSH (host externo)</option>
+            <option value="pve">PVE node (mesmo cluster)</option>
+          </select>
+        </label>
+        <label><span class="filter-label">Host</span><input type="text" name="dest_host" required placeholder="pve02 ou 10.0.0.5"></label>
+        <label><span class="filter-label">User</span><input type="text" name="dest_user" value="root"></label>
+      </div>
+      <div class="repl-form-row">
+        <label><span class="filter-label">VG destino</span><input type="text" name="dest_vg" required placeholder="pve"></label>
+        <label><span class="filter-label">Thin pool destino</span><input type="text" name="dest_thin_pool" required placeholder="data"></label>
+        <label><span class="filter-label">LV destino</span><input type="text" name="dest_lv" required placeholder="vm-100-disk-0"></label>
+      </div>
+    </fieldset>
+
+    <button type="submit">Criar job</button>
+  </form>
+</section>
+{% endif %}
+
+{{ explainer('Como funciona', [
+  ('thin_send / thin_recv',
+   'Ferramentas do <code>thin-provisioning-tools</code>. <code>thin_send</code> com 2 snapshots emite só os blocos modificados entre eles; <code>thin_recv</code> aplica esses blocos no LV destino. Equivalente em LVM ao <code>zfs send -i</code>.'),
+  ('Snapshot incremental',
+   'A primeira execução envia o LV inteiro. As próximas usam o snapshot anterior como base e enviam apenas o delta. Origem mantém os últimos N snapshots (rotação automática).'),
+  ('Schedule',
+   'Sintaxe crontab (<code>*/15 * * * *</code>). Em branco = manual via "Run". O scheduler interno do cockpit (fase 2) vai disparar; por enquanto, use cron do sistema chamando o endpoint POST /replication/jobs/&lt;id&gt;/run.'),
+  ('SSH',
+   'Cockpit usa SSH em modo BatchMode com chave. Configure: <code>ssh-keygen -t ed25519</code> e <code>ssh-copy-id root@destino</code>. Botão "test" verifica conectividade e ferramentas no destino.'),
+  ('Risco',
+   '<strong>Operação destrutiva</strong>: a primeira replicação sobrescreve o LV destino. Snapshots são criados na origem (consomem espaço). Sempre teste em LV de teste antes de pôr em produção.'),
+]) }}
+
+{% endblock %}

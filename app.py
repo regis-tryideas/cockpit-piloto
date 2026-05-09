@@ -1,5 +1,6 @@
 import os
 import secrets
+import time
 from functools import wraps
 
 from flask import (
@@ -8,6 +9,7 @@ from flask import (
 )
 
 from auth import authenticate
+import replication
 import sampler
 import version
 from collectors import cpu as cpu_col
@@ -15,6 +17,7 @@ from collectors import disk as disk_col
 from collectors import kernel as kernel_col
 from collectors import logical_disk as ldisk_col
 from collectors import logs as logs_col
+from collectors import lvm as lvm_col
 from collectors import memory as mem_col
 from collectors import network as net_col
 from collectors import numa as numa_col
@@ -335,6 +338,108 @@ def set_arc_max():
     ok, msg = zfs_col.set_arc_max(gib)
     flash(("ok" if ok else "error", msg))
     return redirect(url_for("view_zfs"))
+
+
+@app.get("/replication")
+@login_required
+def view_replication():
+    lvm_info = lvm_col.collect()
+    with db.connect() as conn:
+        jobs = [dict(r) for r in conn.execute(
+            "SELECT * FROM replication_jobs ORDER BY name").fetchall()]
+        # últimos 5 runs por job
+        runs_by_job = {}
+        for j in jobs:
+            runs = conn.execute(
+                "SELECT * FROM replication_runs WHERE job_id=? "
+                "ORDER BY started_at DESC LIMIT 5", (j["id"],)
+            ).fetchall()
+            runs_by_job[j["id"]] = [dict(r) for r in runs]
+    return render_template(
+        "_panel_replication.html",
+        tab="replication",
+        heading="Replicação LVM",
+        username=g.session["username"],
+        data={
+            "lvm": lvm_info,
+            "jobs": jobs,
+            "runs_by_job": runs_by_job,
+        },
+    )
+
+
+@app.post("/replication/jobs")
+@login_required
+def create_replication_job():
+    f = request.form
+    name = f.get("name", "").strip()
+    if not name:
+        flash(("error", "Nome é obrigatório"))
+        return redirect(url_for("view_replication"))
+    now = int(time.time())
+    try:
+        with db.connect() as conn:
+            conn.execute(
+                "INSERT INTO replication_jobs "
+                "(name, source_vg, source_thin_pool, source_lv, "
+                " dest_kind, dest_host, dest_user, dest_vg, dest_thin_pool, dest_lv, "
+                " schedule, enabled, keep_snapshots, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    f.get("source_vg", "").strip(),
+                    f.get("source_thin_pool", "").strip(),
+                    f.get("source_lv", "").strip(),
+                    f.get("dest_kind", "ssh").strip(),
+                    f.get("dest_host", "").strip(),
+                    f.get("dest_user", "root").strip() or "root",
+                    f.get("dest_vg", "").strip(),
+                    f.get("dest_thin_pool", "").strip(),
+                    f.get("dest_lv", "").strip(),
+                    (f.get("schedule") or "").strip() or None,
+                    1 if f.get("enabled") else 0,
+                    int(f.get("keep_snapshots", 3) or 3),
+                    now, now,
+                )
+            )
+        flash(("ok", f"Job '{name}' criado."))
+    except Exception as e:
+        flash(("error", f"Falha ao criar job: {e}"))
+    return redirect(url_for("view_replication"))
+
+
+@app.post("/replication/jobs/<int:job_id>/delete")
+@login_required
+def delete_replication_job(job_id):
+    with db.connect() as conn:
+        conn.execute("DELETE FROM replication_runs WHERE job_id=?", (job_id,))
+        conn.execute("DELETE FROM replication_jobs WHERE id=?", (job_id,))
+    flash(("ok", f"Job {job_id} removido."))
+    return redirect(url_for("view_replication"))
+
+
+@app.post("/replication/jobs/<int:job_id>/run")
+@login_required
+def run_replication_job(job_id):
+    result = replication.run_job(job_id)
+    flash(("ok" if result["ok"] else "error", result["message"]))
+    return redirect(url_for("view_replication"))
+
+
+@app.post("/replication/jobs/<int:job_id>/test")
+@login_required
+def test_replication_job(job_id):
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT dest_user, dest_host FROM replication_jobs WHERE id=?",
+            (job_id,)
+        ).fetchone()
+    if not row:
+        flash(("error", "Job não encontrado"))
+    else:
+        ok, msg = replication.test_connection(row["dest_user"], row["dest_host"])
+        flash(("ok" if ok else "error", f"Conexão: {msg}"))
+    return redirect(url_for("view_replication"))
 
 
 @app.get("/zfs")
