@@ -1,0 +1,69 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import explainer %}
+{% block panel %}
+
+{% with msgs = get_flashed_messages(with_categories=false) %}
+{% for kind, txt in msgs %}
+<div class="flash flash-{{ kind }}">{{ txt }}</div>
+{% endfor %}
+{% endwith %}
+
+<section class="panel">
+  <h3>
+    <span class="mono">{{ data.path }}</span>
+    <small>{{ data.size }} / {{ data.max_size }} bytes</small>
+  </h3>
+
+  <form method="post" action="{{ url_for('save_hosts') }}"
+        onsubmit="return confirm('Sobrescrever /etc/hosts? Um backup automático será criado.');">
+    <textarea name="content" class="hosts-editor mono" rows="22"
+              spellcheck="false" autocomplete="off"
+              maxlength="{{ data.max_size }}">{{ data.content }}</textarea>
+    <div class="repl-form-row" style="margin-top:8px">
+      <button type="submit">Salvar</button>
+      <a class="btn-small secondary" href="{{ url_for('view_hosts_editor') }}">Recarregar</a>
+      <a class="btn-small" href="{{ url_for('view_system') }}">← Voltar a Sistema</a>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h3>Backups recentes <small>({{ data.backups|length }} arquivos · rotação: últimos 10)</small></h3>
+  {% if not data.backups %}
+    <p class="hint-inline">Nenhum backup ainda. O primeiro será criado ao salvar.</p>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Quando</th><th>Caminho</th><th>Tamanho</th><th>Ação</th></tr>
+      </thead>
+      <tbody>
+        {% for b in data.backups %}
+        <tr>
+          <td class="mono">{{ b.ts | format_ts }}</td>
+          <td class="mono">{{ b.path }}</td>
+          <td>{{ b.size }} bytes</td>
+          <td>
+            <form method="post" action="{{ url_for('restore_hosts') }}"
+                  style="display:inline"
+                  onsubmit="return confirm('Restaurar este backup? O /etc/hosts atual será salvo como backup novo antes.');">
+              <input type="hidden" name="backup" value="{{ b.path }}">
+              <button type="submit" class="btn-small">Restaurar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{{ explainer('Detalhes', [
+  ('Backup automático',  'A cada Salvar, o conteúdo atual de /etc/hosts é copiado para /etc/hosts.cockpit.bak.&lt;timestamp&gt; (modo 0600). Mantém os últimos 10 — os mais antigos são apagados.'),
+  ('Escrita atômica',    'Conteúdo novo é escrito em /etc/hosts.cockpit.tmp e em seguida <code>os.replace()</code> faz o rename atômico — não há janela em que /etc/hosts fique vazio se algo crashar.'),
+  ('Validação',          'Linhas começando com # são comentários. Linhas com menos de 2 tokens (esperado: IP + hostname) geram aviso (não bloqueio) — pode ser intencional em algum caso.'),
+  ('Restaurar',          'Antes de aplicar um backup escolhido, o estado atual é gravado como novo backup. Você nunca perde o conteúdo atual ao restaurar.'),
+  ('Permissões',         'Cockpit roda como root. O arquivo final fica com modo 0644 (padrão); backups com 0600.'),
+]) }}
+{% endblock %}

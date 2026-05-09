@@ -1012,6 +1012,21 @@ body.modal-open { overflow: hidden; }
 .btn-small.danger { color: #f85149; border-color: #b62324; }
 .btn-small.danger:hover { background: rgba(248,81,73,.15); }
 
+.hosts-editor {
+  width: 100%;
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 320px;
+  tab-size: 4;
+}
+.hosts-editor:focus { outline: none; border-color: #58a6ff; }
+
 tr.runs-row td { background: #0d1117; padding: 6px 14px; }
 .sub-table { font-size: 11px; margin-top: 6px; }
 .sub-table td { padding: 4px 8px; }

@@ -2,6 +2,14 @@
 {% from "_history.html" import history_block, explainer %}
 {% block panel %}
 
+{# ---------- Atalhos ---------- #}
+<section class="panel">
+  <h3>Configuração do sistema</h3>
+  <a class="btn-small" href="{{ url_for('view_hosts_editor') }}">
+    📝 Editar /etc/hosts
+  </a>
+</section>
+
 {# ---------- Cards de overview ---------- #}
 <section class="summary-cards">
   <div class="card">

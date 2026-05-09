@@ -302,6 +302,142 @@ def view_logs():
     )
 
 
+HOSTS_PATH = "/etc/hosts"
+HOSTS_BACKUP_PREFIX = "/etc/hosts.cockpit.bak."
+HOSTS_MAX_SIZE = 256 * 1024  # 256 KiB
+HOSTS_KEEP_BACKUPS = 10
+
+
+def _list_hosts_backups():
+    import glob
+    paths = sorted(glob.glob(HOSTS_BACKUP_PREFIX + "*"), reverse=True)
+    out = []
+    for p in paths[:HOSTS_KEEP_BACKUPS]:
+        try:
+            st = os.stat(p)
+            out.append({
+                "path": p,
+                "ts": int(p.rsplit(".", 1)[-1]),
+                "size": st.st_size,
+            })
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+@app.get("/system/hosts")
+@login_required
+def view_hosts_editor():
+    try:
+        with open(HOSTS_PATH) as f:
+            content = f.read()
+    except OSError as e:
+        content = f"# erro ao ler {HOSTS_PATH}: {e}"
+    return render_template(
+        "_panel_hosts.html",
+        tab="system",
+        heading="Editor /etc/hosts",
+        username=g.session["username"],
+        data={
+            "path": HOSTS_PATH,
+            "content": content,
+            "size": len(content),
+            "max_size": HOSTS_MAX_SIZE,
+            "backups": _list_hosts_backups(),
+        },
+    )
+
+
+@app.post("/system/hosts")
+@login_required
+def save_hosts():
+    new_content = request.form.get("content", "")
+    if len(new_content) > HOSTS_MAX_SIZE:
+        flash(("error", f"Conteúdo > {HOSTS_MAX_SIZE} bytes (limite)."))
+        return redirect(url_for("view_hosts_editor"))
+    if "\x00" in new_content:
+        flash(("error", "Conteúdo contém bytes nulos — recusado."))
+        return redirect(url_for("view_hosts_editor"))
+    # Validação mínima: cada linha não-comentário deve ter pelo menos
+    # IP + 1 hostname (mas não vou bloquear, só avisar)
+    invalid_lines = []
+    for n, line in enumerate(new_content.splitlines(), start=1):
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        parts = s.split()
+        if len(parts) < 2:
+            invalid_lines.append(n)
+
+    # Backup
+    ts = int(time.time())
+    backup_path = f"{HOSTS_BACKUP_PREFIX}{ts}"
+    try:
+        with open(HOSTS_PATH) as f:
+            current = f.read()
+        with open(backup_path, "w") as f:
+            f.write(current)
+        os.chmod(backup_path, 0o600)
+    except OSError as e:
+        flash(("error", f"Falha ao criar backup: {e}"))
+        return redirect(url_for("view_hosts_editor"))
+
+    # Escrita atômica via tmpfile + rename
+    try:
+        tmp = HOSTS_PATH + ".cockpit.tmp"
+        with open(tmp, "w") as f:
+            f.write(new_content)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, HOSTS_PATH)
+    except OSError as e:
+        flash(("error", f"Falha ao gravar: {e}"))
+        return redirect(url_for("view_hosts_editor"))
+
+    msg = f"/etc/hosts salvo · backup: {backup_path}"
+    if invalid_lines:
+        msg += f" · linhas suspeitas (1 token só): {invalid_lines[:5]}"
+    flash(("ok", msg))
+
+    # Rotação: mantém só os últimos N
+    backups = _list_hosts_backups()
+    import glob
+    all_paths = sorted(glob.glob(HOSTS_BACKUP_PREFIX + "*"), reverse=True)
+    for old in all_paths[HOSTS_KEEP_BACKUPS:]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+
+    return redirect(url_for("view_hosts_editor"))
+
+
+@app.post("/system/hosts/restore")
+@login_required
+def restore_hosts():
+    backup = request.form.get("backup", "")
+    if not backup.startswith(HOSTS_BACKUP_PREFIX):
+        flash(("error", "Caminho inválido."))
+        return redirect(url_for("view_hosts_editor"))
+    if not os.path.isfile(backup):
+        flash(("error", "Backup não existe."))
+        return redirect(url_for("view_hosts_editor"))
+    try:
+        with open(backup) as f:
+            content = f.read()
+        # Backup do estado atual antes de restaurar
+        ts = int(time.time())
+        with open(HOSTS_PATH) as f:
+            current = f.read()
+        with open(f"{HOSTS_BACKUP_PREFIX}{ts}", "w") as f:
+            f.write(current)
+        with open(HOSTS_PATH, "w") as f:
+            f.write(content)
+        flash(("ok", f"Restaurado de {backup}. Estado anterior salvo em backup."))
+    except OSError as e:
+        flash(("error", f"Falha ao restaurar: {e}"))
+    return redirect(url_for("view_hosts_editor"))
+
+
 @app.get("/numa")
 @login_required
 def view_numa():
