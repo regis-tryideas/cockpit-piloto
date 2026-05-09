@@ -1,5 +1,7 @@
+import json
 import os
 import secrets
+import subprocess
 import time
 from functools import wraps
 
@@ -424,6 +426,95 @@ def run_replication_job(job_id):
     result = replication.run_job(job_id)
     flash(("ok" if result["ok"] else "error", result["message"]))
     return redirect(url_for("view_replication"))
+
+
+@app.get("/api/replication/source-volumes")
+@login_required
+def api_repl_source_volumes():
+    info = lvm_col.collect()
+    if not info.get("available"):
+        return jsonify({"available": False, "error": info.get("error")})
+    vols = [
+        v for v in info.get("thin_volumes", [])
+        if not v.get("is_snapshot")
+        and not v.get("name", "").startswith("cockpitrepl_")
+    ]
+    return jsonify({
+        "available": True,
+        "thin_pools": info.get("thin_pools", []),
+        "volumes": vols,
+    })
+
+
+@app.get("/api/proxmox/nodes")
+@login_required
+def api_pve_nodes():
+    if not pve_col.detect().get("ok"):
+        return jsonify({"available": False, "nodes": []})
+    data = pve_col._run_json([
+        "pvesh", "get", "/nodes", "--output-format=json",
+    ], timeout=10) or []
+    nodes = [{
+        "name": n.get("node"),
+        "status": n.get("status"),
+        "uptime": n.get("uptime", 0),
+        "level": n.get("level"),
+    } for n in data if n.get("node")]
+    return jsonify({"available": True, "nodes": nodes})
+
+
+@app.get("/api/replication/remote-volumes")
+@login_required
+def api_repl_remote_volumes():
+    import shlex
+    user = request.args.get("user", "root").strip() or "root"
+    host = request.args.get("host", "").strip()
+    if not host:
+        return jsonify({"error": "host required"}), 400
+    cmd = [
+        "ssh", "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ConnectTimeout=8",
+        f"{user}@{host}",
+        "lvs --reportformat=json --units=b "
+        "-o vg_name,lv_name,pool_lv,lv_size,data_percent,lv_attr",
+    ]
+    try:
+        out = subprocess.check_output(
+            cmd, stderr=subprocess.STDOUT, timeout=15,
+        )
+    except subprocess.CalledProcessError as e:
+        return jsonify({"error": e.output.decode(errors="replace")[:300]}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "SSH timeout"}), 504
+    except FileNotFoundError:
+        return jsonify({"error": "ssh não encontrado"}), 500
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as e:
+        return jsonify({"error": f"JSON inválido: {e}"}), 500
+    pools, volumes = [], []
+    for r in (data.get("report") or [{}])[0].get("lv", []):
+        attr = r.get("lv_attr", "")
+        try:
+            size_b = int(r["lv_size"].rstrip("B"))
+        except (KeyError, ValueError):
+            size_b = 0
+        row = {
+            "vg": r.get("vg_name"),
+            "name": r.get("lv_name"),
+            "pool": r.get("pool_lv") or "",
+            "size_b": size_b,
+            "data_pct": float(r.get("data_percent") or 0),
+        }
+        if attr.startswith("t"):
+            pools.append(row)
+        elif attr.startswith("V"):
+            volumes.append(row)
+    return jsonify({
+        "host": host, "user": user,
+        "thin_pools": pools, "volumes": volumes,
+    })
 
 
 @app.post("/replication/jobs/<int:job_id>/test")

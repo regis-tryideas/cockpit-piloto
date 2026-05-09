@@ -205,7 +205,8 @@ cd thin-send-recv && make &amp;&amp; sudo make install</pre>
 {% if data.lvm.available %}
 <section class="panel">
   <h3>Adicionar job</h3>
-  <form method="post" action="{{ url_for('create_replication_job') }}" class="repl-form">
+  <form method="post" action="{{ url_for('create_replication_job') }}"
+        class="repl-form" id="repl-create-form">
     <div class="repl-form-row">
       <label>
         <span class="filter-label">Nome</span>
@@ -213,7 +214,7 @@ cd thin-send-recv && make &amp;&amp; sudo make install</pre>
       </label>
       <label>
         <span class="filter-label">Schedule (opcional)</span>
-        <input type="text" name="schedule" placeholder="ex: */15 * * * * (manual em branco)">
+        <input type="text" name="schedule" placeholder="*/15 * * * * (manual em branco)">
       </label>
       <label>
         <span class="filter-label">Manter N snapshots</span>
@@ -227,10 +228,18 @@ cd thin-send-recv && make &amp;&amp; sudo make install</pre>
     <fieldset>
       <legend>Origem (este host)</legend>
       <div class="repl-form-row">
-        <label><span class="filter-label">VG</span><input type="text" name="source_vg" required placeholder="pve"></label>
-        <label><span class="filter-label">Thin pool</span><input type="text" name="source_thin_pool" required placeholder="data"></label>
-        <label><span class="filter-label">LV</span><input type="text" name="source_lv" required placeholder="vm-100-disk-0"></label>
+        <label class="grow">
+          <span class="filter-label">Volume</span>
+          <select id="src-combo" required>
+            <option value="">— carregando… —</option>
+          </select>
+        </label>
+        <button type="button" id="src-refresh" class="btn-small secondary"
+                title="Recarregar lista">↻</button>
       </div>
+      <input type="hidden" name="source_vg">
+      <input type="hidden" name="source_thin_pool">
+      <input type="hidden" name="source_lv">
     </fieldset>
 
     <fieldset>
@@ -238,24 +247,201 @@ cd thin-send-recv && make &amp;&amp; sudo make install</pre>
       <div class="repl-form-row">
         <label>
           <span class="filter-label">Tipo</span>
-          <select name="dest_kind">
-            <option value="ssh">SSH (host externo)</option>
-            <option value="pve">PVE node (mesmo cluster)</option>
+          <select name="dest_kind" id="dest-kind">
+            <option value="ssh">SSH (host livre)</option>
+            <option value="pve">PVE node (cluster)</option>
           </select>
         </label>
-        <label><span class="filter-label">Host</span><input type="text" name="dest_host" required placeholder="pve02 ou 10.0.0.5"></label>
-        <label><span class="filter-label">User</span><input type="text" name="dest_user" value="root"></label>
+
+        <label class="grow ssh-only">
+          <span class="filter-label">Host</span>
+          <input type="text" id="dest-host-ssh" placeholder="hostname ou IP">
+        </label>
+
+        <label class="grow pve-only" hidden>
+          <span class="filter-label">Node</span>
+          <select id="dest-node">
+            <option value="">— carregar nodes —</option>
+          </select>
+        </label>
+
+        <label>
+          <span class="filter-label">User</span>
+          <input type="text" name="dest_user" value="root">
+        </label>
+
+        <button type="button" id="dest-load" class="btn-small">
+          Carregar pools do destino
+        </button>
       </div>
+      <input type="hidden" name="dest_host">
+
       <div class="repl-form-row">
-        <label><span class="filter-label">VG destino</span><input type="text" name="dest_vg" required placeholder="pve"></label>
-        <label><span class="filter-label">Thin pool destino</span><input type="text" name="dest_thin_pool" required placeholder="data"></label>
-        <label><span class="filter-label">LV destino</span><input type="text" name="dest_lv" required placeholder="vm-100-disk-0"></label>
+        <label class="grow">
+          <span class="filter-label">Pool destino (escolher onde criar)</span>
+          <select id="dest-pool">
+            <option value="">— conecte ao destino primeiro —</option>
+          </select>
+        </label>
+        <label class="grow">
+          <span class="filter-label">Nome do LV destino</span>
+          <input type="text" id="dest-lv-name"
+                 placeholder="(deixe vazio para usar o mesmo nome da origem)">
+        </label>
       </div>
+      <input type="hidden" name="dest_vg">
+      <input type="hidden" name="dest_thin_pool">
+      <input type="hidden" name="dest_lv">
+
+      <div id="dest-status" class="hint-inline" style="margin-top:8px"></div>
     </fieldset>
 
     <button type="submit">Criar job</button>
   </form>
 </section>
+
+<script>
+(function(){
+  const $ = (sel) => document.querySelector(sel);
+  const fmtBytes = (b) => {
+    if (!b) return "?";
+    let n = b, i = 0; const u = ["B","KB","MB","GB","TB"];
+    while (n >= 1024 && i < u.length-1) { n /= 1024; i++; }
+    return `${n.toFixed(1)} ${u[i]}`;
+  };
+
+  // 1) Carrega volumes locais para origem
+  async function loadSourceVolumes(){
+    const sel = $("#src-combo");
+    sel.innerHTML = '<option value="">— carregando… —</option>';
+    try {
+      const r = await fetch("/api/replication/source-volumes",
+                            {credentials:"same-origin"});
+      const d = await r.json();
+      sel.innerHTML = '<option value="">— selecione —</option>';
+      if (!d.available || !d.volumes || !d.volumes.length) {
+        sel.innerHTML = '<option value="">nenhum volume thin no host</option>';
+        return;
+      }
+      d.volumes.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = `${v.vg}|${v.pool}|${v.name}`;
+        opt.textContent = `${v.vg}/${v.pool}/${v.name}  (${fmtBytes(v.size_b)})`;
+        sel.appendChild(opt);
+      });
+    } catch(e) {
+      sel.innerHTML = `<option value="">erro: ${e}</option>`;
+    }
+  }
+
+  // 2) Toggle SSH vs PVE
+  $("#dest-kind").addEventListener("change", e => {
+    const isPve = e.target.value === "pve";
+    document.querySelectorAll(".ssh-only").forEach(el => el.hidden = isPve);
+    document.querySelectorAll(".pve-only").forEach(el => el.hidden = !isPve);
+    if (isPve) loadPveNodes();
+  });
+
+  async function loadPveNodes(){
+    const sel = $("#dest-node");
+    sel.innerHTML = '<option value="">— carregando… —</option>';
+    try {
+      const r = await fetch("/api/proxmox/nodes",
+                            {credentials:"same-origin"});
+      const d = await r.json();
+      sel.innerHTML = '';
+      if (!d.available) {
+        sel.innerHTML = '<option value="">PVE não detectado neste host</option>';
+        return;
+      }
+      const def = document.createElement("option");
+      def.value = ""; def.textContent = "— selecione um node —";
+      sel.appendChild(def);
+      d.nodes.forEach(n => {
+        const opt = document.createElement("option");
+        opt.value = n.name;
+        opt.textContent = `${n.name} (${n.status})`;
+        sel.appendChild(opt);
+      });
+    } catch(e) {
+      sel.innerHTML = `<option value="">erro: ${e}</option>`;
+    }
+  }
+
+  // 3) Carrega pools/volumes do destino via SSH
+  function currentDestHost(){
+    return $("#dest-kind").value === "pve"
+      ? $("#dest-node").value
+      : $("#dest-host-ssh").value.trim();
+  }
+  $("#dest-load").addEventListener("click", async () => {
+    const host = currentDestHost();
+    const user = document.querySelector('input[name=dest_user]').value || "root";
+    const status = $("#dest-status");
+    const pool = $("#dest-pool");
+    if (!host) {
+      status.textContent = "informe host/node primeiro";
+      status.className = "hint-inline warn-text";
+      return;
+    }
+    status.textContent = `conectando em ${user}@${host}…`;
+    status.className = "hint-inline";
+    pool.innerHTML = '<option value="">— carregando… —</option>';
+    try {
+      const r = await fetch(
+        `/api/replication/remote-volumes?host=${encodeURIComponent(host)}&user=${encodeURIComponent(user)}`,
+        {credentials:"same-origin"}
+      );
+      const d = await r.json();
+      if (d.error) {
+        status.textContent = `erro: ${d.error}`;
+        status.className = "hint-inline warn-text";
+        pool.innerHTML = '<option value="">— erro —</option>';
+        return;
+      }
+      pool.innerHTML = '<option value="">— selecione —</option>';
+      (d.thin_pools||[]).forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = `${p.vg}|${p.name}`;
+        opt.textContent = `${p.vg}/${p.name}  (livre: ${(100-p.data_pct).toFixed(0)}%)`;
+        pool.appendChild(opt);
+      });
+      const total = (d.thin_pools||[]).length + (d.volumes||[]).length;
+      status.textContent = `${d.thin_pools.length} pools, ${d.volumes.length} volumes existentes em ${user}@${host}`;
+      status.className = "hint-inline";
+    } catch(e) {
+      status.textContent = `erro: ${e}`;
+      status.className = "hint-inline warn-text";
+    }
+  });
+
+  // 4) No submit, expandir os hidden inputs
+  $("#repl-create-form").addEventListener("submit", e => {
+    const src = $("#src-combo").value;
+    if (!src) { e.preventDefault(); alert("Escolha o volume de origem."); return; }
+    const [svg, spool, slv] = src.split("|");
+    document.querySelector('input[name=source_vg]').value = svg;
+    document.querySelector('input[name=source_thin_pool]').value = spool;
+    document.querySelector('input[name=source_lv]').value = slv;
+
+    const host = currentDestHost();
+    if (!host) { e.preventDefault(); alert("Informe o host/node de destino."); return; }
+    document.querySelector('input[name=dest_host]').value = host;
+
+    const dpool = $("#dest-pool").value;
+    if (!dpool) { e.preventDefault(); alert("Escolha o pool de destino."); return; }
+    const [dvg, dpoolName] = dpool.split("|");
+    document.querySelector('input[name=dest_vg]').value = dvg;
+    document.querySelector('input[name=dest_thin_pool]').value = dpoolName;
+    document.querySelector('input[name=dest_lv]').value =
+      $("#dest-lv-name").value.trim() || slv;
+  });
+
+  // Inicializar
+  loadSourceVolumes();
+  $("#src-refresh").addEventListener("click", loadSourceVolumes);
+})();
+</script>
 {% endif %}
 
 {{ explainer('Como funciona', [
