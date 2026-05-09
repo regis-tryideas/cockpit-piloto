@@ -22,15 +22,26 @@
     <div class="card-foot">{{ data.lvm.vgs|length if data.lvm.available else 0 }} VG(s)</div>
   </div>
   <div class="card">
-    <div class="card-label">thin-provisioning-tools</div>
+    <div class="card-label" data-tip="Pacote 'thin-provisioning-tools' (Debian/Ubuntu/RHEL): contém thin_check, thin_delta, thin_dump etc.">thin-provisioning-tools</div>
     <div class="card-value small">
-      {% if data.lvm.thin_tools %}
+      {% if data.lvm.thin_provisioning_tools %}
         <span class="badge ok">presente</span>
       {% else %}
         <span class="badge warn-bg">ausente</span>
       {% endif %}
     </div>
-    <div class="card-foot">thin_send / thin_recv / thin_delta</div>
+    <div class="card-foot">apt install thin-provisioning-tools</div>
+  </div>
+  <div class="card">
+    <div class="card-label" data-tip="Ferramentas thin_send/thin_recv da LINBIT — pacote SEPARADO do thin-provisioning-tools, não vem nos repos default. Habilita modo incremental real (delta entre snapshots).">thin-send-recv</div>
+    <div class="card-value small">
+      {% if data.lvm.thin_send_recv %}
+        <span class="badge ok">presente · incremental</span>
+      {% else %}
+        <span class="badge warn-bg">ausente · só full</span>
+      {% endif %}
+    </div>
+    <div class="card-foot">github.com/LINBIT/thin-send-recv</div>
   </div>
   <div class="card">
     <div class="card-label">Thin pools</div>
@@ -48,12 +59,17 @@
 <section class="panel">
   <div class="alert">{{ data.lvm.error }}</div>
 </section>
-{% elif not data.lvm.thin_tools %}
+{% elif not data.lvm.thin_send_recv %}
 <section class="panel">
-  <div class="alert">
-    <strong>Faltam ferramentas thin no host:</strong> instale com
-    <code>apt install -y thin-provisioning-tools</code>. Sem elas, o
-    mecanismo de delta incremental não funciona.
+  <div class="hint-inline" style="border-left: 3px solid #d29922; padding: 10px 14px;">
+    <strong>Modo full ativo</strong> — só <code>thin-provisioning-tools</code> básico
+    está instalado. Cada execução enviará o LV inteiro via <code>dd | ssh dd</code>.<br>
+    Para habilitar replicação <strong>incremental real</strong> (só delta entre snapshots,
+    como <code>zfs send -i</code>), instale <code>thin-send-recv</code> da LINBIT em
+    ambos os hosts:
+    <pre class="mono" style="margin: 8px 0; padding: 8px; background: #0d1117; border-radius: 4px;">git clone https://github.com/LINBIT/thin-send-recv
+cd thin-send-recv && make &amp;&amp; sudo make install</pre>
+    Após instalar, rode "test" no job e o cockpit detecta automaticamente.
   </div>
 </section>
 {% endif %}

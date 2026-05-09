@@ -7,11 +7,29 @@ def has_lvm() -> bool:
     return shutil.which("lvs") is not None and shutil.which("vgs") is not None
 
 
-def has_thin_tools() -> bool:
-    """thin_send/thin_recv vêm do pacote thin-provisioning-tools."""
+def has_thin_provisioning_tools() -> bool:
+    """thin-provisioning-tools (upstream): thin_check, thin_delta, thin_dump...
+
+    Vem do pacote 'thin-provisioning-tools' nos repos Debian/Ubuntu/RHEL.
+    """
+    return (shutil.which("thin_delta") is not None
+            and shutil.which("thin_dump") is not None)
+
+
+def has_thin_send_recv() -> bool:
+    """thin_send / thin_recv (LINBIT/thin-send-recv) — pacote separado.
+
+    Não vem nos repos default; precisa instalar de
+    https://github.com/LINBIT/thin-send-recv (build manual ou repo LINBIT).
+    Quando presente, habilita replicação incremental real.
+    """
     return (shutil.which("thin_send") is not None
-            and shutil.which("thin_recv") is not None
-            and shutil.which("thin_delta") is not None)
+            and shutil.which("thin_recv") is not None)
+
+
+def has_thin_tools() -> bool:
+    """Compat — true quando ambos os conjuntos estão presentes."""
+    return has_thin_provisioning_tools() and has_thin_send_recv()
 
 
 def _run_json(cmd: list[str], timeout: int = 5):
@@ -113,9 +131,14 @@ def collect() -> dict:
             "available": False,
             "error": "LVM não instalado (lvm2 ausente).",
         }
+    has_tpt = has_thin_provisioning_tools()
+    has_tsr = has_thin_send_recv()
     return {
         "available": True,
-        "thin_tools": has_thin_tools(),
+        "thin_tools": has_tpt and has_tsr,  # compat
+        "thin_provisioning_tools": has_tpt,
+        "thin_send_recv": has_tsr,
+        "supports_incremental": has_tsr,
         "vgs": list_vgs(),
         "thin_pools": list_thin_pools(),
         "thin_volumes": list_thin_volumes(),

@@ -55,16 +55,28 @@ def _ssh_cmd(user: str, host: str, remote_cmd: str) -> list[str]:
 
 
 def test_connection(user: str, host: str) -> tuple[bool, str]:
-    """Verifica que SSH funciona e que ferramentas existem no destino."""
+    """Verifica SSH + ferramentas no destino. Reporta o modo que vai usar."""
     rc, out, err = _run(_ssh_cmd(
         user, host,
-        "command -v lvcreate >/dev/null && command -v thin_recv >/dev/null && echo OK",
+        "command -v lvcreate >/dev/null && echo LVM"
+        " && (command -v thin_recv >/dev/null && echo TSR)"
+        " ; (command -v dd >/dev/null && echo DD)",
     ), timeout=15)
     if rc != 0:
         return False, f"SSH falhou: {err.strip() or out.strip() or rc}"
-    if "OK" not in out:
-        return False, "Destino não tem lvm2 + thin-provisioning-tools"
-    return True, "OK"
+    has_lvm_remote = "LVM" in out
+    has_tsr_remote = "TSR" in out
+    has_dd_remote = "DD" in out
+    if not has_lvm_remote:
+        return False, "Destino não tem lvm2 (lvcreate não encontrado)"
+    if not has_dd_remote:
+        return False, "Destino não tem dd (impossível replicar)"
+    if has_tsr_remote and lvm.has_thin_send_recv():
+        return True, "OK · modo incremental (thin_send/thin_recv) disponível"
+    return True, (
+        "OK · modo full (dd). Para incremental real, instale "
+        "thin-send-recv (LINBIT) em ambos os hosts."
+    )
 
 
 def _create_thin_snapshot(vg: str, lv: str, snap_name: str) -> tuple[bool, str]:
@@ -135,11 +147,16 @@ def _ensure_dest_lv(job: dict, src_size_b: int) -> tuple[bool, str]:
 
 
 def run_job(job_id: int) -> dict:
-    """Executa um job de replicação. Retorna {ok, message, run_id}."""
+    """Executa um job de replicação. Retorna {ok, message, run_id}.
+
+    Escolhe o melhor mecanismo disponível:
+    - thin_send/thin_recv (incremental verdadeiro) — se disponível na origem
+      e no destino. Equivale a 'zfs send -i'.
+    - dd full — fallback. Cada execução envia o LV inteiro (snapshot + dd
+      via SSH). Funciona sem thin-send-recv.
+    """
     if not lvm.has_lvm():
         return {"ok": False, "message": "LVM não disponível neste host."}
-    if not lvm.has_thin_tools():
-        return {"ok": False, "message": "thin-provisioning-tools ausente."}
 
     with db.connect() as conn:
         row = conn.execute(
@@ -152,7 +169,13 @@ def run_job(job_id: int) -> dict:
     started_at = _now()
     new_snap = _snapshot_name(job["source_lv"])
     prev_snap = job["last_snapshot"]
-    mode = "incremental" if prev_snap else "full"
+    has_tsr = lvm.has_thin_send_recv()
+    if has_tsr:
+        mode = "incremental" if prev_snap else "full"
+    else:
+        # Sem thin_send/recv: cai para full via dd (cada run envia tudo)
+        mode = "full"
+        prev_snap = None
 
     # Registra início do run
     with db.connect() as conn:
@@ -209,23 +232,27 @@ def run_job(job_id: int) -> dict:
         if not ok:
             return _finish(False, msg)
 
-        # 3) Pipe: thin_send local | ssh dest "thin_recv"
-        # Usa o block device dos snapshots
+        # 3) Pipe: <local stream> | ssh dest "<remote write>"
         src_dev = f"/dev/{job['source_vg']}/{new_snap}"
         dest_dev = f"/dev/{job['dest_vg']}/{job['dest_lv']}"
 
-        if mode == "incremental" and prev_snap:
-            # thin_send com 2 snapshots = só o delta
-            local = ["thin_send", f"/dev/{job['source_vg']}/{prev_snap}", src_dev]
+        if has_tsr:
+            # Caminho preferido: thin_send | ssh thin_recv (delta de blocos)
+            if mode == "incremental" and prev_snap:
+                local = ["thin_send",
+                         f"/dev/{job['source_vg']}/{prev_snap}", src_dev]
+            else:
+                local = ["thin_send", src_dev]
+            remote = f"thin_recv {shlex.quote(dest_dev)}"
         else:
-            local = ["thin_send", src_dev]
+            # Fallback: dd direto (full toda vez). Block size 4M é razoável.
+            local = ["dd", f"if={src_dev}", "bs=4M", "status=none"]
+            remote = (
+                f"dd of={shlex.quote(dest_dev)} bs=4M status=none conv=fsync"
+            )
 
-        remote = (
-            f"thin_recv {shlex.quote(dest_dev)}"
-        )
         ssh = _ssh_cmd(job["dest_user"], job["dest_host"], remote)
 
-        # Pipe thin_send | ssh ... thin_recv
         proc_send = subprocess.Popen(
             local, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
@@ -234,17 +261,20 @@ def run_job(job_id: int) -> dict:
             stderr=subprocess.PIPE,
         )
         if proc_send.stdout:
-            proc_send.stdout.close()  # permite ao send receber SIGPIPE
+            proc_send.stdout.close()
         recv_out, recv_err = proc_recv.communicate(timeout=3600)
         send_err = proc_send.stderr.read().decode(errors="replace") if proc_send.stderr else ""
         proc_send.wait(timeout=10)
 
+        send_name = local[0]
+        recv_name = "thin_recv" if has_tsr else "dd"
         if proc_send.returncode != 0:
-            return _finish(False, f"thin_send falhou: {send_err.strip()}")
+            return _finish(False, f"{send_name} falhou: {send_err.strip()}")
         if proc_recv.returncode != 0:
             return _finish(
                 False,
-                f"thin_recv (remoto) falhou: {recv_err.decode(errors='replace').strip()}",
+                f"{recv_name} (remoto) falhou: "
+                f"{recv_err.decode(errors='replace').strip()}",
             )
 
         bytes_sent = src_info["size_b"]  # aproximação; tracking real em fase 2

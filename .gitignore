@@ -12,8 +12,13 @@ __pycache__/
 
 # SQLite — contém sessões ativas e log de tentativas de login
 cockpit.db
+cockpit.db-*
 *.sqlite
 *.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*-shm
+*-wal
 
 # Logs
 *.log
