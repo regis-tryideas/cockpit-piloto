@@ -131,7 +131,7 @@ def _client_addr() -> str:
 @app.get("/login")
 def login_form():
     if g.get("session"):
-        return redirect(url_for("view_disk"))
+        return redirect(url_for("view_dashboard"))
     return render_template("login.html", error=None)
 
 
@@ -153,9 +153,9 @@ def login():
         return render_template("login.html", error=error), 401
 
     token = db.create_session(username, addr)
-    nxt = request.form.get("next") or url_for("view_disk")
+    nxt = request.form.get("next") or url_for("view_dashboard")
     if not nxt.startswith("/"):
-        nxt = url_for("view_disk")
+        nxt = url_for("view_dashboard")
     resp = make_response(redirect(nxt))
     resp.set_cookie(
         SESSION_COOKIE,

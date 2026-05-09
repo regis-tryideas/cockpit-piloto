@@ -84,8 +84,36 @@ def _storage_index() -> dict:
     return {s["storage"]: s for s in storages()}
 
 
-def _vm_config(vmid: int, vm_type: str) -> dict:
-    """Lê config da VM (qm) ou container (pct) e retorna dict bruto."""
+def _vm_config(vmid: int, vm_type: str, node: str | None = None) -> dict:
+    """Lê config da VM. Tenta ler direto /etc/pve/nodes/<n>/.../<vmid>.conf
+    (instantâneo via pmxcfs); fallback para qm/pct config se não acessível.
+
+    Para o config "current" da VM, paramos de ler ao encontrar a primeira
+    seção [snapshot] — tudo abaixo são configs de snapshots, não a atual.
+    """
+    conf_path = _vm_conf_path(vmid, vm_type, node)
+    if conf_path and conf_path.exists():
+        try:
+            text = conf_path.read_text()
+        except OSError:
+            text = None
+        if text:
+            cfg = {}
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                # Para nesse ponto: tudo após primeira [snap] são configs
+                # de snapshot, não da VM atual
+                if stripped.startswith("[") and stripped.endswith("]"):
+                    break
+                if ":" not in stripped:
+                    continue
+                k, _, v = stripped.partition(":")
+                cfg[k.strip()] = v.strip()
+            return cfg
+
+    # Fallback: usa o comando (mais lento, ~300ms por VM)
     cmd = ["qm" if vm_type == "qemu" else "pct", "config", str(vmid)]
     raw = _run_text(cmd, timeout=5)
     if not raw:
@@ -112,9 +140,9 @@ def _parse_disk_value(value: str) -> dict:
     return {"storage": storage, "volume": volume, **extras}
 
 
-def vm_disks(vmid: int, vm_type: str) -> list[dict]:
+def vm_disks(vmid: int, vm_type: str, node: str | None = None) -> list[dict]:
     """Extrai discos da config + resolve dataset ZFS quando aplicável."""
-    cfg = _vm_config(vmid, vm_type)
+    cfg = _vm_config(vmid, vm_type, node)
     if not cfg:
         return []
 
@@ -198,7 +226,7 @@ def collect() -> dict:
     for v in vms:
         vmid = int(v.get("vmid", 0))
         vm_type = v.get("type", "qemu")
-        disks = vm_disks(vmid, vm_type)
+        disks = vm_disks(vmid, vm_type, node=node)
         for d in disks:
             ds = d.get("zfs_dataset")
             if ds:
