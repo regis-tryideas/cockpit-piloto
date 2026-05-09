@@ -4,7 +4,6 @@ import shutil
 import socket
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 PVE_DIR = Path("/etc/pve")
@@ -249,25 +248,15 @@ def collect() -> dict:
             "disks": disks,
         })
 
-    # Conta snapshots em paralelo (cada chamada é ~200ms)
-    def _count(v):
+    # Conta snapshots lendo /etc/pve/nodes/<n>/qemu-server/<vmid>.conf
+    # (instantâneo, sem chamadas pvesh) — funciona pra qualquer N de VMs
+    for v in enriched:
         try:
-            return v["vmid"], vm_snapshot_count(v["vmid"], v["type"])
+            v["snapshot_count"] = vm_snapshot_count_fast(
+                v["vmid"], v["type"], node=node,
+            )
         except Exception:
-            return v["vmid"], None
-
-    if enriched:
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = [pool.submit(_count, v) for v in enriched]
-            counts = {}
-            for fut in as_completed(futures, timeout=15):
-                try:
-                    vmid, c = fut.result()
-                    counts[vmid] = c
-                except Exception:
-                    pass
-        for v in enriched:
-            v["snapshot_count"] = counts.get(v["vmid"])
+            v["snapshot_count"] = None
 
     enriched.sort(key=lambda x: (x["status"] != "running", -x["cpu_pct"]))
 
@@ -295,6 +284,44 @@ def _msg(state: dict) -> str:
     if not state["pvesh"]:
         return "Comando pvesh não está disponível — instale proxmox-ve."
     return "Proxmox VE indisponível."
+
+
+def _vm_conf_path(vmid: int, vm_type: str, node: str | None = None) -> Path | None:
+    """Caminho do .conf da VM em /etc/pve/.
+
+    QEMU: /etc/pve/nodes/<node>/qemu-server/<vmid>.conf
+    LXC:  /etc/pve/nodes/<node>/lxc/<vmid>.conf
+    """
+    if not node:
+        node = detect().get("node")
+    if not node:
+        return None
+    kind = "lxc" if vm_type == "lxc" else "qemu-server"
+    return Path(f"/etc/pve/nodes/{node}/{kind}/{vmid}.conf")
+
+
+def vm_snapshot_count_fast(vmid: int, vm_type: str, node: str | None = None) -> int:
+    """Conta snapshots lendo direto o .conf da VM (instantâneo).
+
+    O pmxcfs grava snapshots como seções [name] no arquivo de config.
+    Muito mais rápido que pvesh quando há dezenas de VMs.
+    """
+    p = _vm_conf_path(vmid, vm_type, node)
+    if not p or not p.exists():
+        return 0
+    try:
+        text = p.read_text()
+    except OSError:
+        return 0
+    count = 0
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            name = s[1:-1].strip()
+            # 'current' não existe como seção; qualquer [..] é um snapshot
+            if name and name != "current":
+                count += 1
+    return count
 
 
 def vm_snapshots(vmid: int, vm_type: str) -> list[dict]:
