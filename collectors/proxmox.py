@@ -276,7 +276,59 @@ def _msg(state: dict) -> str:
     return "Proxmox VE indisponível."
 
 
-def vm_summary_for_history(vms: list[dict]) -> list[dict]:
+def vm_tasks(vmid: int, limit: int = 20) -> list[dict]:
+    """Tasks do PVE relacionadas à VM (start/stop/migrate/backup/...)."""
+    state = detect()
+    if not state["ok"] or not state["node"]:
+        return []
+    data = _run_json([
+        "pvesh", "get", f"/nodes/{state['node']}/tasks",
+        f"--vmid={vmid}", f"--limit={limit}",
+        "--output-format=json",
+    ], timeout=10)
+    if not data:
+        return []
+    rows = []
+    for t in data:
+        rows.append({
+            "upid":      t.get("upid"),
+            "type":      t.get("type"),
+            "user":      t.get("user"),
+            "node":      t.get("node"),
+            "starttime": t.get("starttime"),
+            "endtime":   t.get("endtime"),
+            "status":    t.get("status"),  # 'OK' / 'ERROR ...' / null se em curso
+            "id":        t.get("id"),
+        })
+    return rows
+
+
+def vm_logs(vmid: int, vm_type: str = "qemu", since: str = "1h",
+            lines: int = 200) -> dict:
+    """Logs da VM via journalctl filtrando pelo .scope/.service do systemd.
+
+    QEMU: roda em <vmid>.scope dentro de qemu.slice.
+    LXC : roda em pve-container@<vmid>.service dentro de lxc.slice.
+    """
+    from . import logs as logs_col
+
+    if vm_type == "lxc":
+        candidates = [f"pve-container@{vmid}.service", f"{vmid}.scope"]
+    else:
+        candidates = [f"{vmid}.scope", f"qemu-{vmid}.scope"]
+
+    last_error = None
+    for unit in candidates:
+        result = logs_col.journal(
+            priority=7, unit=unit, since=since, lines=lines,
+        )
+        if result.get("error"):
+            last_error = result["error"]
+            continue
+        if result.get("rows"):
+            return {"unit": unit, **result}
+    return {"unit": candidates[0], "rows": [],
+            "error": last_error or "nenhum log encontrado"}
     """Devolve linhas prontas pra inserção em metrics_pve_vm."""
     return [{
         "vmid": v["vmid"],

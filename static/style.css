@@ -494,6 +494,70 @@ tbody tr:hover { background: #1c2128; }
   color: #c9d1d9;
 }
 tr.vm-stopped { opacity: 0.5; }
+tr.vm-row:hover { background: #1c2128; }
+
+.pve-search {
+  width: 100%;
+  max-width: 480px;
+  padding: 7px 10px;
+  margin-bottom: 12px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #e6edf3;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+}
+.pve-search:focus { outline: none; border-color: #58a6ff; }
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.75);
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+}
+.modal-overlay[hidden] { display: none; }
+body.modal-open { overflow: hidden; }
+.modal-body {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  width: 100%;
+  max-width: 1200px;
+  box-shadow: 0 12px 48px rgba(0,0,0,.6);
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #21262d;
+  position: sticky;
+  top: 0;
+  background: #0d1117;
+  z-index: 1;
+}
+.modal-head h3 { margin: 0; font-size: 16px; }
+.modal-close {
+  width: 32px; height: 32px;
+  border: 0;
+  background: transparent;
+  color: #8b949e;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.modal-close:hover { background: #21262d; color: #e6edf3; }
+.modal-content { padding: 16px; }
+.modal-content .window-picker { margin-bottom: 14px; }
+.modal-content .chart-wrap { height: 200px; }
 
 /* Process states grid */
 .proc-states {

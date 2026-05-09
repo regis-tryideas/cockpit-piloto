@@ -44,9 +44,12 @@
 {% set top_running = data.vms|selectattr('status','equalto','running')|list %}
 {% if top_running %}
 <section class="panel">
-  <h3>VMs e containers <small>(ordenados por CPU%, snapshot atual)</small></h3>
+  <h3>VMs e containers <small>(ordenados por CPU% · clique numa linha para detalhes)</small></h3>
+  <input type="search" id="pve-search"
+         placeholder="🔍 pesquisar por VMID, nome, tipo, status…"
+         class="pve-search" autocomplete="off">
   <div class="table-wrap">
-    <table>
+    <table id="pve-vms-table">
       <thead>
         <tr>
           <th>VMID</th><th>Nome</th><th>Tipo</th><th>Status</th>
@@ -59,9 +62,10 @@
       </thead>
       <tbody>
         {% for v in data.vms %}
-        <tr class="{% if v.status != 'running' %}vm-stopped{% endif %}">
+        <tr class="vm-row {% if v.status != 'running' %}vm-stopped{% endif %}"
+            data-vmid="{{ v.vmid }}" data-vmname="{{ v.name }}" data-vmtype="{{ v.type }}">
           <td><strong>{{ v.vmid }}</strong></td>
-          <td><a href="{{ url_for('view_proxmox') }}#vm-{{ v.vmid }}">{{ v.name }}</a></td>
+          <td>{{ v.name }}</td>
           <td><span class="badge {{ 'transport' if v.type=='qemu' else '' }}">{{ v.type }}</span></td>
           <td>
             <span class="badge {{ 'ok' if v.status=='running' else 'warn-bg' }}">
@@ -186,6 +190,214 @@
   {% endif %}
   {% endfor %}
 </section>
+
+{# ---------- Modal de detalhes da VM ---------- #}
+<div id="vm-modal" class="modal-overlay" hidden>
+  <div class="modal-body">
+    <header class="modal-head">
+      <h3 id="vm-modal-title">VM</h3>
+      <button type="button" class="modal-close" aria-label="Fechar">×</button>
+    </header>
+    <div class="modal-content">
+      <div class="window-picker" id="vm-modal-window">
+        <button data-window="1h" class="active">1h</button>
+        <button data-window="6h">6h</button>
+        <button data-window="24h">24h</button>
+        <button data-window="72h">72h</button>
+      </div>
+
+      <div class="chart-grid-3" id="vm-modal-charts">
+        <section class="panel"><h3>CPU%</h3><div class="chart-wrap"><canvas id="vm-chart-cpu"></canvas></div></section>
+        <section class="panel"><h3>Memória usada (bytes)</h3><div class="chart-wrap"><canvas id="vm-chart-mem"></canvas></div></section>
+        <section class="panel"><h3>Disk I/O (bytes/s)</h3><div class="chart-wrap"><canvas id="vm-chart-disk"></canvas></div></section>
+        <section class="panel"><h3>Network (bytes/s)</h3><div class="chart-wrap"><canvas id="vm-chart-net"></canvas></div></section>
+      </div>
+
+      <section class="panel">
+        <h3>Tasks recentes do PVE</h3>
+        <div class="table-wrap"><table id="vm-tasks-table">
+          <thead><tr>
+            <th>Tipo</th><th>Quando</th><th>Duração</th><th>Status</th><th>Usuário</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
+
+      <section class="panel">
+        <h3>Logs recentes <small id="vm-logs-meta"></small></h3>
+        <div class="table-wrap logs-table"><table id="vm-logs-table">
+          <thead><tr><th>Quando</th><th>Prio</th><th>Mensagem</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const modal = document.getElementById('vm-modal');
+  const title = document.getElementById('vm-modal-title');
+  const closeBtn = modal.querySelector('.modal-close');
+  const windowPicker = document.getElementById('vm-modal-window');
+  const search = document.getElementById('pve-search');
+  const table = document.getElementById('pve-vms-table');
+  if (!table) return;
+
+  // Pesquisa client-side: filtra <tr> por substring nas células
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    table.querySelectorAll('tbody tr').forEach(tr => {
+      const txt = tr.textContent.toLowerCase();
+      tr.style.display = (q === '' || txt.includes(q)) ? '' : 'none';
+    });
+  });
+
+  // Charts (recriados a cada VM aberta)
+  const charts = { cpu: null, mem: null, disk: null, net: null };
+  let currentVmid = null;
+  let currentType = "qemu";
+  let currentWindow = "1h";
+
+  function destroyCharts(){
+    Object.keys(charts).forEach(k => {
+      if (charts[k]) { charts[k].destroy(); charts[k] = null; }
+    });
+  }
+
+  function makeChart(canvasId, datasets, yLabel){
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    return new Chart(ctx, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { color: '#c9d1d9', boxWidth: 12 } } },
+        scales: {
+          x: { type: 'time', ticks: { color: '#8b949e', maxRotation: 0 },
+               grid: { color: '#21262d' } },
+          y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' },
+               title: { display: true, text: yLabel, color: '#8b949e' } },
+        },
+      },
+    });
+  }
+
+  async function loadVmData(){
+    if (!currentVmid) return;
+    const r = await fetch(`/api/history/pve_vm?window=${currentWindow}&vmid=${currentVmid}`,
+                          { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    const rows = data.rows || [];
+
+    const ts = (r) => r.ts * 1000;
+    destroyCharts();
+    charts.cpu = makeChart('vm-chart-cpu', [{
+      label: 'CPU %', data: rows.map(r => ({x: ts(r), y: r.cpu_pct})),
+      borderColor: '#58a6ff', backgroundColor: '#58a6ff33',
+      tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+    }], '%');
+    charts.mem = makeChart('vm-chart-mem', [{
+      label: 'Mem usada', data: rows.map(r => ({x: ts(r), y: r.mem_used_b})),
+      borderColor: '#3fb950', backgroundColor: '#3fb95033',
+      tension: 0.2, pointRadius: 0, borderWidth: 1.5,
+    }], 'bytes');
+    charts.disk = makeChart('vm-chart-disk', [
+      { label: 'read B/s',  data: rows.map(r => ({x: ts(r), y: r.diskread_bps  || 0})),
+        borderColor: '#58a6ff', tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
+      { label: 'write B/s', data: rows.map(r => ({x: ts(r), y: r.diskwrite_bps || 0})),
+        borderColor: '#f0883e', tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
+    ], 'bytes/s');
+    charts.net = makeChart('vm-chart-net', [
+      { label: 'in B/s',  data: rows.map(r => ({x: ts(r), y: r.netin_bps  || 0})),
+        borderColor: '#3fb950', tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
+      { label: 'out B/s', data: rows.map(r => ({x: ts(r), y: r.netout_bps || 0})),
+        borderColor: '#a371f7', tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
+    ], 'bytes/s');
+  }
+
+  async function loadVmLogsAndTasks(){
+    if (!currentVmid) return;
+    const r = await fetch(`/api/proxmox/vm/${currentVmid}/logs?type=${currentType}&since=1h&lines=200`,
+                          { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+
+    const tbody = document.querySelector('#vm-tasks-table tbody');
+    tbody.innerHTML = '';
+    (data.tasks || []).forEach(t => {
+      const tr = document.createElement('tr');
+      const start = t.starttime ? new Date(t.starttime*1000).toLocaleString() : '—';
+      const dur = (t.starttime && t.endtime) ? `${t.endtime - t.starttime}s` : '—';
+      const okBadge = t.status === 'OK' ? '<span class="badge ok">OK</span>'
+                    : (t.status ? `<span class="badge warn-bg">${t.status.slice(0,40)}</span>`
+                                : '<span class="badge">running</span>');
+      tr.innerHTML = `<td><span class="mono">${t.type}</span></td>
+                      <td>${start}</td><td>${dur}</td>
+                      <td>${okBadge}</td><td>${t.user || ''}</td>`;
+      tbody.appendChild(tr);
+    });
+
+    const meta = document.getElementById('vm-logs-meta');
+    const logs = (data.logs && data.logs.rows) || [];
+    meta.textContent = `unit: ${data.logs?.unit || '—'} · ${logs.length} entradas`
+                     + (data.logs?.error ? ` · ${data.logs.error}` : '');
+    const ltbody = document.querySelector('#vm-logs-table tbody');
+    ltbody.innerHTML = '';
+    logs.forEach(l => {
+      const tr = document.createElement('tr');
+      tr.className = `prio-${l.priority}`;
+      const ts = l.ts ? new Date(l.ts*1000).toLocaleString() : '—';
+      tr.innerHTML = `<td class="mono">${ts}</td>
+                      <td><span class="badge prio-badge prio-${l.priority}">${l.priority_label}</span></td>
+                      <td class="log-msg mono">${(l.message || '').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c])}</td>`;
+      ltbody.appendChild(tr);
+    });
+  }
+
+  function openModal(vmid, vmname, vmtype){
+    currentVmid = vmid;
+    currentType = vmtype || 'qemu';
+    title.textContent = `${vmid} · ${vmname || 'VM'} (${currentType})`;
+    modal.removeAttribute('hidden');
+    document.body.classList.add('modal-open');
+    loadVmData();
+    loadVmLogsAndTasks();
+  }
+
+  function closeModal(){
+    modal.setAttribute('hidden', '');
+    document.body.classList.remove('modal-open');
+    destroyCharts();
+    currentVmid = null;
+  }
+
+  // Click handlers
+  table.querySelectorAll('tbody tr.vm-row').forEach(tr => {
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', () => {
+      openModal(tr.dataset.vmid, tr.dataset.vmname, tr.dataset.vmtype);
+    });
+  });
+  closeBtn.addEventListener('click', closeModal);
+  modal.addEventListener('click', e => {
+    if (e.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !modal.hasAttribute('hidden')) closeModal();
+  });
+
+  windowPicker.addEventListener('click', e => {
+    if (e.target.tagName !== 'BUTTON') return;
+    windowPicker.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    e.target.classList.add('active');
+    currentWindow = e.target.dataset.window;
+    loadVmData();
+  });
+})();
+</script>
 
 {{ explainer('Como ler estas métricas', [
   ('CPU%',         'Percentual médio (entre amostras do PVE) consumido pela VM. Multiplicado por <em>vCPUs</em> resulta em "cores efetivos" — comparar com cores físicos do host indica overcommit real.'),

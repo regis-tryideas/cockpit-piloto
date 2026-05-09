@@ -441,7 +441,46 @@ def api_history(resource):
             r["avg_latency"] = (
                 round((ra * ri + wa * wi) / total, 2) if total > 0 else 0.0
             )
+
+    if resource == "pve_vm":
+        vmid = request.args.get("vmid")
+        if vmid:
+            try:
+                vmid_int = int(vmid)
+                rows = [r for r in rows if r.get("vmid") == vmid_int]
+            except ValueError:
+                pass
+        # Calcula deltas de IO/rede entre amostras (campos cumulativos no PVE)
+        prev = {}
+        for r in rows:
+            key = r.get("vmid")
+            p = prev.get(key)
+            if p:
+                dt = max(1, (r["ts"] or 0) - (p["ts"] or 0))
+                for src, dest in (
+                    ("diskread_b", "diskread_bps"),
+                    ("diskwrite_b", "diskwrite_bps"),
+                    ("netin_b",   "netin_bps"),
+                    ("netout_b",  "netout_bps"),
+                ):
+                    cur_v = r.get(src) or 0
+                    prev_v = p.get(src) or 0
+                    delta = max(0, cur_v - prev_v)  # ignora reset (start de VM)
+                    r[dest] = round(delta / dt, 2)
+            prev[key] = r
+
     return jsonify({"resource": resource, "window": window, "rows": rows})
+
+
+@app.get("/api/proxmox/vm/<int:vmid>/logs")
+@login_required
+def api_proxmox_vm_logs(vmid):
+    vm_type = request.args.get("type", "qemu")
+    since = request.args.get("since", "1h")
+    lines = int(request.args.get("lines", "200"))
+    tasks = pve_col.vm_tasks(vmid, limit=20)
+    logs = pve_col.vm_logs(vmid, vm_type=vm_type, since=since, lines=lines)
+    return jsonify({"vmid": vmid, "tasks": tasks, "logs": logs})
 
 
 @app.errorhandler(404)
