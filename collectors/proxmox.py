@@ -4,6 +4,7 @@ import shutil
 import socket
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 PVE_DIR = Path("/etc/pve")
@@ -248,6 +249,26 @@ def collect() -> dict:
             "disks": disks,
         })
 
+    # Conta snapshots em paralelo (cada chamada é ~200ms)
+    def _count(v):
+        try:
+            return v["vmid"], vm_snapshot_count(v["vmid"], v["type"])
+        except Exception:
+            return v["vmid"], None
+
+    if enriched:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(_count, v) for v in enriched]
+            counts = {}
+            for fut in as_completed(futures, timeout=15):
+                try:
+                    vmid, c = fut.result()
+                    counts[vmid] = c
+                except Exception:
+                    pass
+        for v in enriched:
+            v["snapshot_count"] = counts.get(v["vmid"])
+
     enriched.sort(key=lambda x: (x["status"] != "running", -x["cpu_pct"]))
 
     impact = {
@@ -274,6 +295,39 @@ def _msg(state: dict) -> str:
     if not state["pvesh"]:
         return "Comando pvesh não está disponível — instale proxmox-ve."
     return "Proxmox VE indisponível."
+
+
+def vm_snapshots(vmid: int, vm_type: str) -> list[dict]:
+    """Lista snapshots de uma VM (QEMU) ou container (LXC)."""
+    state = detect()
+    if not state["ok"] or not state["node"]:
+        return []
+    kind = "lxc" if vm_type == "lxc" else "qemu"
+    data = _run_json([
+        "pvesh", "get",
+        f"/nodes/{state['node']}/{kind}/{vmid}/snapshot",
+        "--output-format=json",
+    ], timeout=8)
+    if not data:
+        return []
+    rows = []
+    for s in data:
+        # 'current' é sempre a entrada virtual "você está aqui" — não conta
+        if s.get("name") == "current":
+            continue
+        rows.append({
+            "name":        s.get("name"),
+            "description": s.get("description"),
+            "snaptime":    s.get("snaptime"),
+            "parent":      s.get("parent"),
+            "vmstate":     bool(s.get("vmstate", 0)),
+        })
+    rows.sort(key=lambda r: r.get("snaptime") or 0, reverse=True)
+    return rows
+
+
+def vm_snapshot_count(vmid: int, vm_type: str) -> int:
+    return len(vm_snapshots(vmid, vm_type))
 
 
 def vm_tasks(vmid: int, limit: int = 20) -> list[dict]:

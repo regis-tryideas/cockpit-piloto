@@ -57,6 +57,7 @@
           <th>RAM uso</th><th>RAM%</th>
           <th>Disk read</th><th>Disk write</th>
           <th>Net in</th><th>Net out</th>
+          <th data-tip="Quantidade de snapshots ativos. Excesso em VMs com muita escrita degrada performance (CoW).">Snaps</th>
           <th>Uptime</th>
         </tr>
       </thead>
@@ -90,6 +91,9 @@
           <td>{{ (v.diskwrite_b/1024/1024/1024)|round(2) }} GiB</td>
           <td>{{ (v.netin_b/1024/1024/1024)|round(2) }} GiB</td>
           <td>{{ (v.netout_b/1024/1024/1024)|round(2) }} GiB</td>
+          <td class="{% if v.snapshot_count and v.snapshot_count > 5 %}warn-text{% endif %}">
+            {{ v.snapshot_count if v.snapshot_count is not none else '—' }}
+          </td>
           <td>{{ (v.uptime_s/86400)|round(1) }} d</td>
         </tr>
         {% endfor %}
@@ -199,19 +203,35 @@
       <button type="button" class="modal-close" aria-label="Fechar">×</button>
     </header>
     <div class="modal-content">
-      <div class="window-picker" id="vm-modal-window">
-        <button data-window="1h" class="active">1h</button>
-        <button data-window="6h">6h</button>
-        <button data-window="24h">24h</button>
-        <button data-window="72h">72h</button>
+      <div class="modal-toolbar">
+        <div class="window-picker" id="vm-modal-window">
+          <button data-window="1h" class="active">1h</button>
+          <button data-window="6h">6h</button>
+          <button data-window="24h">24h</button>
+          <button data-window="72h">72h</button>
+        </div>
+        <div class="modal-zoom-help">
+          arraste no gráfico para selecionar período · shift+arrastar = pan
+          <button id="vm-zoom-reset" type="button">↺ reset zoom</button>
+        </div>
       </div>
 
-      <div class="chart-grid-3" id="vm-modal-charts">
-        <section class="panel"><h3>CPU%</h3><div class="chart-wrap"><canvas id="vm-chart-cpu"></canvas></div></section>
-        <section class="panel"><h3>Memória usada (bytes)</h3><div class="chart-wrap"><canvas id="vm-chart-mem"></canvas></div></section>
-        <section class="panel"><h3>Disk I/O (bytes/s)</h3><div class="chart-wrap"><canvas id="vm-chart-disk"></canvas></div></section>
-        <section class="panel"><h3>Network (bytes/s)</h3><div class="chart-wrap"><canvas id="vm-chart-net"></canvas></div></section>
+      <div class="chart-stack" id="vm-modal-charts">
+        <section class="panel"><h3>CPU%</h3><div class="chart-wrap tall"><canvas id="vm-chart-cpu"></canvas></div></section>
+        <section class="panel"><h3>Memória usada (bytes)</h3><div class="chart-wrap tall"><canvas id="vm-chart-mem"></canvas></div></section>
+        <section class="panel"><h3>Disk I/O (bytes/s)</h3><div class="chart-wrap tall"><canvas id="vm-chart-disk"></canvas></div></section>
+        <section class="panel"><h3>Network (bytes/s)</h3><div class="chart-wrap tall"><canvas id="vm-chart-net"></canvas></div></section>
       </div>
+
+      <section class="panel">
+        <h3>Snapshots <small id="vm-snaps-count"></small></h3>
+        <div class="table-wrap"><table id="vm-snaps-table">
+          <thead><tr>
+            <th>Nome</th><th>Quando</th><th>VM state</th><th>Parent</th><th>Descrição</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </section>
 
       <section class="panel">
         <h3>Tasks recentes do PVE</h3>
@@ -273,7 +293,22 @@
       options: {
         animation: false, responsive: true, maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { labels: { color: '#c9d1d9', boxWidth: 12 } } },
+        plugins: {
+          legend: { labels: { color: '#c9d1d9', boxWidth: 12 } },
+          zoom: {
+            zoom: {
+              drag: {
+                enabled: true,
+                backgroundColor: 'rgba(88,166,255,0.18)',
+                borderColor: '#58a6ff',
+                borderWidth: 1,
+              },
+              mode: 'x',
+            },
+            pan: { enabled: true, mode: 'x', modifierKey: 'shift' },
+            limits: { x: { minRange: 60_000 } },
+          },
+        },
         scales: {
           x: { type: 'time', ticks: { color: '#8b949e', maxRotation: 0 },
                grid: { color: '#21262d' } },
@@ -316,6 +351,34 @@
       { label: 'out B/s', data: rows.map(r => ({x: ts(r), y: r.netout_bps || 0})),
         borderColor: '#a371f7', tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
     ], 'bytes/s');
+  }
+
+  async function loadVmSnapshots(){
+    if (!currentVmid) return;
+    const r = await fetch(`/api/proxmox/vm/${currentVmid}/snapshots?type=${currentType}`,
+                          { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    const snaps = data.snapshots || [];
+    document.getElementById('vm-snaps-count').textContent = `· ${snaps.length} ativos`;
+    const tbody = document.querySelector('#vm-snaps-table tbody');
+    tbody.innerHTML = '';
+    if (!snaps.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="hint-inline">Nenhum snapshot ativo.</td></tr>`;
+      return;
+    }
+    snaps.forEach(s => {
+      const tr = document.createElement('tr');
+      const when = s.snaptime ? new Date(s.snaptime*1000).toLocaleString() : '—';
+      tr.innerHTML = `
+        <td><strong class="mono">${s.name}</strong></td>
+        <td>${when}</td>
+        <td>${s.vmstate ? '<span class="badge ok">com state</span>' : '—'}</td>
+        <td><span class="mono">${s.parent || '—'}</span></td>
+        <td>${(s.description || '').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c])}</td>
+      `;
+      tbody.appendChild(tr);
+    });
   }
 
   async function loadVmLogsAndTasks(){
@@ -365,6 +428,7 @@
     document.body.classList.add('modal-open');
     loadVmData();
     loadVmLogsAndTasks();
+    loadVmSnapshots();
   }
 
   function closeModal(){
@@ -395,6 +459,10 @@
     e.target.classList.add('active');
     currentWindow = e.target.dataset.window;
     loadVmData();
+  });
+
+  document.getElementById('vm-zoom-reset').addEventListener('click', () => {
+    Object.values(charts).forEach(c => c && c.resetZoom && c.resetZoom());
   });
 })();
 </script>

@@ -483,6 +483,14 @@ def api_proxmox_vm_logs(vmid):
     return jsonify({"vmid": vmid, "tasks": tasks, "logs": logs})
 
 
+@app.get("/api/proxmox/vm/<int:vmid>/snapshots")
+@login_required
+def api_proxmox_vm_snapshots(vmid):
+    vm_type = request.args.get("type", "qemu")
+    snaps = pve_col.vm_snapshots(vmid, vm_type=vm_type)
+    return jsonify({"vmid": vmid, "snapshots": snaps})
+
+
 @app.errorhandler(404)
 def not_found(_):
     return ("Página não encontrada", 404)

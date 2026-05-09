@@ -556,8 +556,38 @@ body.modal-open { overflow: hidden; }
 }
 .modal-close:hover { background: #21262d; color: #e6edf3; }
 .modal-content { padding: 16px; }
-.modal-content .window-picker { margin-bottom: 14px; }
-.modal-content .chart-wrap { height: 200px; }
+.modal-content .window-picker { margin-bottom: 0; }
+
+.chart-stack { display: flex; flex-direction: column; gap: 14px; margin-bottom: 14px; }
+.chart-stack .panel { margin-bottom: 0; }
+.chart-wrap.tall { height: 320px; }
+
+.modal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.modal-zoom-help {
+  font-size: 12px;
+  color: #6e7681;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.modal-zoom-help button {
+  padding: 4px 10px;
+  border: 1px solid #30363d;
+  background: #21262d;
+  color: #c9d1d9;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.modal-zoom-help button:hover { background: #30363d; }
 
 /* Process states grid */
 .proc-states {
