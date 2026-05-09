@@ -38,22 +38,36 @@
       const ctx = canvas.getContext("2d");
       let chart = null;
 
-      // Formatador adaptativo: converte um valor para B/kB/MB/GB/TB conforme magnitude.
-      // valueFormat reconhecido:
-      //   'bytes'           — valor já em bytes
-      //   'bytes_per_sec'   — valor em B/s (anexa /s)
-      //   'kbytes_per_sec'  — valor em kB/s (multiplica por 1024 antes; anexa /s)
-      function fmtBytes(v, vf){
-        if (v == null || isNaN(v)) return "—";
+      // Unidade fixa do gráfico (recalculada a cada load com base no maior
+      // valor visto). Evita o eixo Y misturar kB/MB/GB e dificultar leitura.
+      let fixedUnit = null;     // { factor, unit, perSec }
+      const UNITS_BIN = ["B", "kB", "MB", "GB", "TB", "PB"];
+
+      function pickFixedUnit(datasets, vf){
         const perSec = vf && vf.endsWith("_per_sec");
-        let n = Math.abs(v);
-        if (vf === "kbytes_per_sec") n *= 1024;
-        const sign = v < 0 ? "-" : "";
-        const units = ["B", "kB", "MB", "GB", "TB", "PB"];
+        let max = 0;
+        datasets.forEach(d => {
+          (d.data || []).forEach(p => {
+            let n = Math.abs(p.y || 0);
+            if (vf === "kbytes_per_sec") n *= 1024;
+            if (n > max) max = n;
+          });
+        });
         let i = 0;
-        while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-        const decimals = i === 0 ? 0 : 2;
-        return `${sign}${n.toFixed(decimals)} ${units[i]}${perSec ? "/s" : ""}`;
+        let factor = 1;
+        while (max >= 1024 && i < UNITS_BIN.length - 1) {
+          max /= 1024; factor *= 1024; i++;
+        }
+        // Sobe pra MB se for >= 1 KB e < 1 MB (preferência do usuário por MB/GB)
+        if (i === 1 && max < 1024) { i = 2; factor *= 1024; }
+        return { factor, unit: UNITS_BIN[i], perSec };
+      }
+
+      function fmtFixed(v){
+        if (v == null || isNaN(v) || !fixedUnit) return Number(v ?? 0).toFixed(2);
+        let n = v;
+        if (cfg.valueFormat === "kbytes_per_sec") n *= 1024;
+        return `${(n / fixedUnit.factor).toFixed(2)} ${fixedUnit.unit}${fixedUnit.perSec ? "/s" : ""}`;
       }
       function fmtCount(v){
         if (v == null || isNaN(v)) return "—";
@@ -65,7 +79,7 @@
         const vf = cfg.valueFormat;
         if (!vf) return Number(v).toFixed(2);
         if (vf === "bytes" || vf === "bytes_per_sec" || vf === "kbytes_per_sec") {
-          return fmtBytes(v, vf);
+          return fmtFixed(v);
         }
         if (vf === "count") return fmtCount(v);
         return Number(v).toFixed(2);
@@ -120,6 +134,14 @@
 
       function render(datasets){
         if (chart) chart.destroy();
+        // Calcula unidade fixa a partir do maior valor entre todos os datasets
+        if (cfg.valueFormat &&
+            (cfg.valueFormat === "bytes" || cfg.valueFormat === "bytes_per_sec"
+             || cfg.valueFormat === "kbytes_per_sec")) {
+          fixedUnit = pickFixedUnit(datasets, cfg.valueFormat);
+        } else {
+          fixedUnit = null;
+        }
         chart = new Chart(ctx, {
           type: "line",
           data: { datasets },

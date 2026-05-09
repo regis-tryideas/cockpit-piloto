@@ -300,8 +300,28 @@
     } finally { syncing = false; }
   }
 
+  // Escolhe unidade fixa B/kB/MB/GB/TB com base no maior valor da série
+  function pickFixedUnit(datasets){
+    const UNITS = ["B", "kB", "MB", "GB", "TB", "PB"];
+    let max = 0;
+    datasets.forEach(d => (d.data||[]).forEach(p => {
+      const v = Math.abs(p.y || 0); if (v > max) max = v;
+    }));
+    let i = 0, factor = 1;
+    while (max >= 1024 && i < UNITS.length - 1) { max /= 1024; factor *= 1024; i++; }
+    if (i === 1 && max < 1024) { i = 2; factor *= 1024; }
+    return { factor, unit: UNITS[i] };
+  }
+
   function makeChart(canvasId, datasets, yLabel){
     const ctx = document.getElementById(canvasId).getContext('2d');
+    const isBytes = yLabel && (yLabel.indexOf("byte") >= 0);
+    const perSec = yLabel && yLabel.indexOf("/s") >= 0;
+    const fu = isBytes ? pickFixedUnit(datasets) : null;
+    const fmt = (v) => {
+      if (fu) return `${(v / fu.factor).toFixed(2)} ${fu.unit}${perSec ? "/s" : ""}`;
+      return Number(v ?? 0).toFixed(2);
+    };
     return new Chart(ctx, {
       type: 'line',
       data: { datasets },
@@ -310,6 +330,12 @@
         interaction: { mode: 'index', intersect: false },
         plugins: {
           legend: { labels: { color: '#c9d1d9', boxWidth: 12 } },
+          tooltip: {
+            mode: 'index', intersect: false,
+            callbacks: {
+              label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}`,
+            },
+          },
           zoom: {
             zoom: {
               drag: {
@@ -331,8 +357,14 @@
         scales: {
           x: { type: 'time', ticks: { color: '#8b949e', maxRotation: 0 },
                grid: { color: '#21262d' } },
-          y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' },
-               title: { display: true, text: yLabel, color: '#8b949e' } },
+          y: {
+            ticks: {
+              color: '#8b949e',
+              callback: (v) => isBytes ? fmt(v) : v,
+            },
+            grid: { color: '#21262d' },
+            title: { display: true, text: fu ? `${yLabel} (${fu.unit}${perSec ? '/s' : ''})` : yLabel, color: '#8b949e' },
+          },
         },
       },
     });
