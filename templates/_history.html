@@ -13,11 +13,15 @@
 <section class="panel">
   <div class="hist-header">
     <h3>{{ title }} <small>(últimas 72h máx)</small></h3>
-    <div class="window-picker" data-target="{{ slot_id }}">
-      <button data-window="1h" class="active">1h</button>
-      <button data-window="6h">6h</button>
-      <button data-window="24h">24h</button>
-      <button data-window="72h">72h</button>
+    <div class="hist-controls">
+      <div class="window-picker" data-target="{{ slot_id }}">
+        <button data-window="1h" class="active">1h</button>
+        <button data-window="6h">6h</button>
+        <button data-window="24h">24h</button>
+        <button data-window="72h">72h</button>
+      </div>
+      <button class="zoom-reset" data-target="{{ slot_id }}"
+              title="Reset zoom (clique e arraste no gráfico para selecionar período)">↺</button>
     </div>
   </div>
   <div class="chart-wrap">
@@ -94,6 +98,19 @@
             plugins: {
               legend: { labels: { color: "#c9d1d9", boxWidth: 12 } },
               tooltip: { mode: "index", intersect: false },
+              zoom: {
+                zoom: {
+                  drag: {
+                    enabled: true,
+                    backgroundColor: "rgba(88,166,255,0.18)",
+                    borderColor: "#58a6ff",
+                    borderWidth: 1,
+                  },
+                  mode: "x",
+                },
+                pan: { enabled: true, mode: "x", modifierKey: "shift" },
+                limits: { x: { minRange: 60_000 } },
+              },
             },
             scales: {
               x: {
@@ -127,6 +144,14 @@
         currentWindow = e.target.dataset.window;
         load(currentWindow);
       });
+
+      // Reset zoom (botão ↺)
+      const resetBtn = document.querySelector(`.zoom-reset[data-target="${id}"]`);
+      if (resetBtn) {
+        resetBtn.addEventListener("click", () => {
+          if (chart && chart.resetZoom) chart.resetZoom();
+        });
+      }
 
       // Soft refresh recarrega os dados do gráfico mantendo a janela atual
       canvas.addEventListener("cockpit:refresh", () => load(currentWindow));

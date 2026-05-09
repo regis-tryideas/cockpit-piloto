@@ -783,6 +783,26 @@ body.modal-open { overflow: hidden; }
 .window-picker button:last-child { border-right: 0; }
 .window-picker button:hover { background: #21262d; }
 .window-picker button.active { background: #1f6feb; color: #fff; }
+
+.hist-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.zoom-reset {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #c9d1d9;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+.zoom-reset:hover { background: #21262d; color: #58a6ff; }
+.chart-wrap { cursor: crosshair; }
 .chart-wrap {
   position: relative;
   height: 240px;
