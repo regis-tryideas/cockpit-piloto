@@ -1,0 +1,27 @@
+[Unit]
+Description=Cockpit - piloto (monitor de recursos da máquina)
+Documentation=https://github.com/regis-tryideas/cockpit-piloto
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/cockpit
+ExecStart=/root/cockpit/bin/python3 /root/cockpit/app.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cockpit-piloto
+
+# Tuning
+LimitNOFILE=65535
+
+# Environment overrides (descomente para mudar)
+# Environment=COCKPIT_HOST=0.0.0.0
+# Environment=COCKPIT_PORT=6969
+# Environment=COCKPIT_SECRET=<gere com 'openssl rand -hex 32'>
+
+[Install]
+WantedBy=multi-user.target
