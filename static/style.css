@@ -1027,6 +1027,42 @@ body.modal-open { overflow: hidden; }
 }
 .hosts-editor:focus { outline: none; border-color: #58a6ff; }
 
+/* Proxmox tool links (sub-menu de ferramentas) */
+.pve-tools { padding: 10px 14px; }
+.pve-tool-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  color: #c9d1d9;
+  text-decoration: none;
+  transition: border-color .1s, transform .05s;
+}
+.pve-tool-link:hover {
+  border-color: #58a6ff;
+  color: #fff;
+  transform: translateY(-1px);
+}
+.pve-tool-icon {
+  font-size: 22px;
+  color: #58a6ff;
+}
+.pve-tool-link strong { display: block; font-weight: 600; }
+.pve-tool-link small { color: #8b949e; font-size: 11px; }
+
+/* Breadcrumb */
+.breadcrumb {
+  font-size: 12px;
+  color: #8b949e;
+  margin-bottom: 12px;
+}
+.breadcrumb a { color: #58a6ff; }
+.breadcrumb a:hover { text-decoration: underline; }
+.breadcrumb span { margin: 0 6px; }
+
 tr.runs-row td { background: #0d1117; padding: 6px 14px; }
 .sub-table { font-size: 11px; margin-top: 6px; }
 .sub-table td { padding: 4px 8px; }

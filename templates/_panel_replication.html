@@ -2,6 +2,12 @@
 {% from "_history.html" import explainer %}
 {% block panel %}
 
+<nav class="breadcrumb">
+  <a href="{{ url_for('view_proxmox') }}">← Proxmox</a>
+  <span>·</span>
+  <span>Replicação</span>
+</nav>
+
 {% with msgs = get_flashed_messages(with_categories=false) %}
 {% for kind, txt in msgs %}
 <div class="flash flash-{{ kind }}">{{ txt }}</div>

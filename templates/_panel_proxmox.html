@@ -10,7 +10,27 @@
     (existência de <code>/etc/pve</code> e do comando <code>pvesh</code>).
   </p>
 </section>
+<section class="panel pve-tools">
+  <a class="pve-tool-link" href="{{ url_for('view_replication') }}">
+    <span class="pve-tool-icon">⇄</span>
+    <span>
+      <strong>Replicação LVM / ZFS</strong>
+      <small>disponível mesmo sem PVE — útil em storage servers</small>
+    </span>
+  </a>
+</section>
 {% else %}
+
+{# ---------- Ferramentas / sub-navegação ---------- #}
+<section class="panel pve-tools">
+  <a class="pve-tool-link" href="{{ url_for('view_replication') }}">
+    <span class="pve-tool-icon">⇄</span>
+    <span>
+      <strong>Replicação de VMs</strong>
+      <small>LVM thin e ZFS · jobs com schedule, run-now, histórico</small>
+    </span>
+  </a>
+</section>
 
 {# ---------- Impacto agregado no host ---------- #}
 <section class="summary-cards">

@@ -495,7 +495,7 @@ def view_replication():
             runs_by_job[j["id"]] = [dict(r) for r in runs]
     return render_template(
         "_panel_replication.html",
-        tab="replication",
+        tab="proxmox",
         heading="Replicação LVM",
         username=g.session["username"],
         data={
