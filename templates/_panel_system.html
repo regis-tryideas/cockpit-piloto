@@ -134,9 +134,16 @@
 </section>
 {% endif %}
 
+{# ---------- Flash messages ---------- #}
+{% with msgs = get_flashed_messages(with_categories=false) %}
+{% for kind, txt in msgs %}
+<div class="flash flash-{{ kind }}">{{ txt }}</div>
+{% endfor %}
+{% endwith %}
+
 {# ---------- Tuning recommendations ---------- #}
 {% if data.tuning and data.tuning.recommendations %}
-<section class="panel">
+<section class="panel" id="tuning">
   <h3>
     Recomendações de tuning
     <small>· baseadas em {{ data.tuning.context.total_ram_gb }} GiB RAM ·
@@ -163,6 +170,7 @@
           <th>Valor atual</th>
           <th>Recomendado</th>
           <th>Por quê</th>
+          <th>Aplicar</th>
         </tr>
       </thead>
       <tbody>
@@ -178,6 +186,25 @@
           <td class="mono">{{ r.current }}</td>
           <td class="mono">{{ r.recommended }}</td>
           <td>{{ r.why|safe }}</td>
+          <td>
+            {% if not r.matches and r.key != 'zfs.arc_max' %}
+            <form method="post" action="{{ url_for('apply_tuning') }}"
+                  style="display:inline"
+                  onsubmit="return confirm('Aplicar {{ r.key }} = {{ r.recommended }}?\n\nMudança imediata + persistida em /etc/sysctl.d/.');">
+              <input type="hidden" name="key" value="{{ r.key }}">
+              <input type="hidden" name="value" value="{{ r.recommended }}">
+              <button type="submit" class="btn-small" title="Aplicar e persistir">
+                ✓ Aplicar
+              </button>
+            </form>
+            {% elif r.key == 'zfs.arc_max' %}
+              <a href="{{ url_for('view_zfs') }}" class="btn-small secondary">
+                ↗ ZFS
+              </a>
+            {% else %}
+              <span class="mono" style="color:#3fb950">✓</span>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

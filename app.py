@@ -290,6 +290,127 @@ def view_system():
     )
 
 
+SYSCTL_DROPIN = "/etc/sysctl.d/99-pve-cockpit.conf"
+THP_TMPFILES = "/etc/tmpfiles.d/cockpit-thp.conf"
+THP_RUNTIME = "/sys/kernel/mm/transparent_hugepage/enabled"
+
+
+def _persist_sysctl(key: str, value: str) -> tuple[bool, str]:
+    """Adiciona/substitui linha 'key = value' em /etc/sysctl.d/99-pve-cockpit.conf"""
+    new_line = f"{key} = {value}"
+    try:
+        existing = ""
+        if os.path.exists(SYSCTL_DROPIN):
+            with open(SYSCTL_DROPIN) as f:
+                existing = f.read()
+        out_lines = []
+        replaced = False
+        for line in existing.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                out_lines.append(line)
+                continue
+            # Match 'key = value' ou 'key=value'
+            parts = stripped.split("=", 1)
+            if len(parts) == 2 and parts[0].strip() == key:
+                out_lines.append(new_line)
+                replaced = True
+            else:
+                out_lines.append(line)
+        if not replaced:
+            if out_lines and out_lines[-1] != "":
+                out_lines.append("")
+            out_lines.append(f"# Set by cockpit-piloto")
+            out_lines.append(new_line)
+        content = "\n".join(out_lines) + "\n"
+        # Escrita atômica
+        tmp = SYSCTL_DROPIN + ".cockpit.tmp"
+        with open(tmp, "w") as f:
+            f.write(content)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, SYSCTL_DROPIN)
+        return True, f"persistido em {SYSCTL_DROPIN}"
+    except OSError as e:
+        return False, str(e)
+
+
+def _apply_sysctl_runtime(key: str, value: str) -> tuple[bool, str]:
+    path = "/proc/sys/" + key.replace(".", "/")
+    if not os.path.exists(path):
+        return False, f"sysctl não existe em runtime: {path}"
+    try:
+        with open(path, "w") as f:
+            f.write(str(value))
+        return True, "aplicado em runtime"
+    except OSError as e:
+        return False, f"falha runtime: {e}"
+
+
+def _apply_thp(value: str) -> tuple[bool, str]:
+    """Aplica transparent_hugepage e persiste via tmpfiles.d."""
+    if value not in ("always", "madvise", "never"):
+        return False, f"valor inválido para THP: {value}"
+    if not os.path.exists(THP_RUNTIME):
+        return False, "THP não suportado neste kernel"
+    try:
+        with open(THP_RUNTIME, "w") as f:
+            f.write(value)
+    except OSError as e:
+        return False, f"runtime falhou: {e}"
+    try:
+        with open(THP_TMPFILES, "w") as f:
+            f.write(
+                "# Set by cockpit-piloto - reaplica THP a cada boot\n"
+                f"w /sys/kernel/mm/transparent_hugepage/enabled - - - - {value}\n"
+                f"w /sys/kernel/mm/transparent_hugepage/defrag - - - - {value}\n"
+            )
+        os.chmod(THP_TMPFILES, 0o644)
+    except OSError as e:
+        return False, f"runtime aplicado, mas persistência falhou: {e}"
+    return True, f"THP={value} aplicado · persistido em {THP_TMPFILES}"
+
+
+@app.post("/system/tuning/apply")
+@login_required
+def apply_tuning():
+    key = (request.form.get("key") or "").strip()
+    value = (request.form.get("value") or "").strip()
+    if not key or not value:
+        flash(("error", "Parâmetros key e value são obrigatórios."))
+        return redirect(url_for("view_system") + "#tuning")
+
+    # Caso especial: THP
+    if key == "transparent_hugepage":
+        ok, msg = _apply_thp(value)
+        flash(("ok" if ok else "error", f"{key}: {msg}"))
+        return redirect(url_for("view_system") + "#tuning")
+
+    # Caso especial: zfs.arc_max — redireciona pro fluxo dedicado
+    if key == "zfs.arc_max":
+        flash(("info",
+               "Para alterar zfs_arc_max, use a aba ZFS → 'Ajustar ARC max' (interface dedicada)."))
+        return redirect(url_for("view_zfs"))
+
+    # Caso geral: sysctl
+    if not key.split(".", 1)[0] in ("vm", "kernel", "fs", "net"):
+        flash(("error", f"Chave não suportada: {key}"))
+        return redirect(url_for("view_system") + "#tuning")
+
+    ok1, msg1 = _apply_sysctl_runtime(key, value)
+    if not ok1:
+        flash(("error", f"{key}: {msg1}"))
+        return redirect(url_for("view_system") + "#tuning")
+
+    ok2, msg2 = _persist_sysctl(key, value)
+    if not ok2:
+        flash(("error",
+               f"{key} aplicado em runtime mas falhou ao persistir: {msg2}"))
+        return redirect(url_for("view_system") + "#tuning")
+
+    flash(("ok", f"{key} = {value} · {msg1} · {msg2}"))
+    return redirect(url_for("view_system") + "#tuning")
+
+
 @app.get("/logs")
 @login_required
 def view_logs():
