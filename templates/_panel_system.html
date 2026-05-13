@@ -85,6 +85,114 @@
   </div>
 </section>
 
+{# ---------- Processos em D-state ---------- #}
+{% if data.d_state %}
+<section class="panel">
+  <h3>
+    Processos em D-state (uninterruptible)
+    <small>· {{ data.d_state|length }} processos bloqueados em I/O ou lock do kernel</small>
+  </h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>PID</th>
+          <th>Nome</th>
+          <th data-tip="Função kernel onde o processo está dormindo (de /proc/PID/wchan). Ex: 'io_schedule' = aguardando IO; 'mutex_*' = lock; valores '0' significam que o processo já saiu de D.">wchan</th>
+          <th data-tip="Tempo total que esse processo passou bloqueado em IO desde o boot (delayacct_blkio_ticks).">tempo em IO</th>
+          <th>Tipo</th>
+          <th>cmdline</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in data.d_state %}
+        <tr class="{% if p.blkio_seconds >= 60 %}warn-text{% endif %}">
+          <td>{{ p.pid }}</td>
+          <td><span class="mono">{{ p.comm }}</span></td>
+          <td class="mono">{{ p.wchan }}</td>
+          <td>{{ "%.1f"|format(p.blkio_seconds) }} s</td>
+          <td>
+            {% if p.is_kthread %}
+              <span class="badge warn-bg" data-tip="Kernel thread em D-state. Pode indicar problema em driver/storage.">kthread</span>
+            {% else %}
+              <span class="badge">user</span>
+            {% endif %}
+          </td>
+          <td class="mono log-msg">{{ p.cmdline[:120] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="hint-inline">
+    <strong>Importante:</strong> D-state pontual é normal (qualquer processo
+    em IO passa por D rapidamente). Preocupante quando:
+    (1) o mesmo PID está em D em chamadas sucessivas — gargalo de storage real;
+    (2) há kernel threads em D — pode indicar driver travando ou hardware com
+    problema; (3) muitos processos em D simultâneos — saturação do storage backend.
+  </p>
+</section>
+{% endif %}
+
+{# ---------- Tuning recommendations ---------- #}
+{% if data.tuning and data.tuning.recommendations %}
+<section class="panel">
+  <h3>
+    Recomendações de tuning
+    <small>· baseadas em {{ data.tuning.context.total_ram_gb }} GiB RAM ·
+    {{ data.tuning.context.cores }} cores ·
+    {{ data.tuning.context.pve_vms }} VMs running ·
+    {{ 'ZFS sim' if data.tuning.context.has_zfs else 'sem ZFS' }} ·
+    {{ data.tuning.context.numa_nodes }} nó(s) NUMA</small>
+  </h3>
+
+  <div class="tuning-stats">
+    {% set s = data.tuning.by_severity %}
+    {% if s.critical %}<span class="badge critical-bg">{{ s.critical }} críticos</span>{% endif %}
+    {% if s.warn %}<span class="badge warn-bg">{{ s.warn }} avisos</span>{% endif %}
+    {% if s.info %}<span class="badge">{{ s.info }} info</span>{% endif %}
+    {% if s.ok %}<span class="badge ok">{{ s.ok }} OK</span>{% endif %}
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Severidade</th>
+          <th>Chave</th>
+          <th>Valor atual</th>
+          <th>Recomendado</th>
+          <th>Por quê</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in data.tuning.recommendations %}
+        <tr class="tuning-row tuning-{{ r.severity }}">
+          <td>
+            {% if r.severity == 'critical' %}<span class="badge critical-bg">crit</span>
+            {% elif r.severity == 'warn' %}<span class="badge warn-bg">warn</span>
+            {% elif r.severity == 'ok' %}<span class="badge ok">ok</span>
+            {% else %}<span class="badge">info</span>{% endif %}
+          </td>
+          <td><span class="mono">{{ r.key }}</span></td>
+          <td class="mono">{{ r.current }}</td>
+          <td class="mono">{{ r.recommended }}</td>
+          <td>{{ r.why|safe }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="hint-inline">
+    Para aplicar permanentemente, edite <code>/etc/sysctl.d/99-pve-cockpit.conf</code>
+    com as chaves do tipo <code>vm.swappiness = 10</code> e rode
+    <code>sysctl --system</code>. Para THP, adicione em <code>/etc/rc.local</code>:
+    <code>echo madvise &gt; /sys/kernel/mm/transparent_hugepage/enabled</code>.
+  </p>
+</section>
+{% endif %}
+
 {# ---------- Histórico ---------- #}
 {{ history_block(
   'procs-chart',

@@ -27,6 +27,7 @@ from collectors import pressure as psi_col
 from collectors import proxmox as pve_col
 from collectors import smart as smart_col
 from collectors import system as system_col
+from collectors import tuning as tuning_col
 from collectors import zfs as zfs_col
 import db
 
@@ -256,6 +257,30 @@ def view_logical_disk():
 def view_system():
     data = system_col.collect(top_limit=20)
     data["kernel"] = kernel_col.collect()
+    data["d_state"] = system_col.d_state_processes(limit=30)
+
+    # Contexto pro tuning: RAM, cores, nº de VMs PVE, ZFS, NUMA
+    mem = mem_col.collect()
+    total_ram_b = (mem.get("ram_kb") or {}).get("total", 0) * 1024
+    cores = data["info"].get("logical_cpus") or 1
+    pve_vms = 0
+    if PVE_DETECTED:
+        try:
+            pve_info = pve_col.collect()
+            if not pve_info.get("error"):
+                pve_vms = pve_info.get("impact", {}).get("running_count", 0)
+        except Exception:
+            pass
+    from collectors import numa as numa_col_local
+    numa_info = numa_col_local.collect()
+    numa_nodes = numa_info.get("node_count", 1) if not numa_info.get("error") else 1
+    zfs_avail = zfs_col.detect().get("ok", False)
+
+    data["tuning"] = tuning_col.collect(
+        total_ram_b=total_ram_b, cores=cores, pve_vms=pve_vms,
+        has_zfs=zfs_avail, numa_nodes=numa_nodes,
+    )
+
     return render_template(
         "_panel_system.html",
         tab="system",

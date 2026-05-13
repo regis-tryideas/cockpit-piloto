@@ -79,6 +79,70 @@ def process_states() -> dict:
     }
 
 
+def d_state_processes(limit: int = 30) -> list[dict]:
+    """Lista processos em D-state (uninterruptible sleep).
+
+    D-state significa que o processo está bloqueado em I/O ou lock no kernel
+    e NÃO pode ser interrompido (nem com SIGKILL). Picos curtos são normais;
+    processos sustentados em D indicam gargalo real de disco ou bug de driver.
+    """
+    rows = []
+    try:
+        ticks_per_sec = os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError):
+        ticks_per_sec = 100
+
+    try:
+        with os.scandir("/proc") as it:
+            for entry in it:
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    with open(f"/proc/{entry.name}/stat") as f:
+                        line = f.read()
+                    # Parse cuidadoso: o comm está entre parênteses mas pode
+                    # conter espaços. Separamos pelos parênteses.
+                    open_paren = line.find("(")
+                    close_paren = line.rfind(")")
+                    if open_paren < 0 or close_paren < 0:
+                        continue
+                    comm = line[open_paren + 1:close_paren]
+                    rest = line[close_paren + 2:].split()
+                    state = rest[0]
+                    if state != "D":
+                        continue
+                    blkio_ticks = int(rest[39]) if len(rest) > 39 else 0
+                    blkio_seconds = round(blkio_ticks / ticks_per_sec, 2)
+                except (FileNotFoundError, PermissionError, IndexError, ValueError):
+                    continue
+                try:
+                    with open(f"/proc/{entry.name}/wchan") as f:
+                        wchan = f.read().strip()
+                except OSError:
+                    wchan = "?"
+                try:
+                    with open(f"/proc/{entry.name}/cmdline", "rb") as f:
+                        raw = f.read()
+                    cmdline = raw.replace(b"\x00", b" ").decode(
+                        errors="replace").strip()
+                except OSError:
+                    cmdline = ""
+                rows.append({
+                    "pid": int(entry.name),
+                    "comm": comm,
+                    "cmdline": cmdline or f"[{comm}]",
+                    "wchan": wchan or "?",
+                    "blkio_seconds": blkio_seconds,
+                    "is_kthread": not cmdline,
+                })
+    except OSError:
+        pass
+
+    # Ordena por blkio_seconds desc (mais bloqueados em IO no topo)
+    rows.sort(key=lambda r: r["blkio_seconds"], reverse=True)
+    return rows[:limit]
+
+
 def fd_stats() -> dict:
     try:
         with open("/proc/sys/fs/file-nr") as f:

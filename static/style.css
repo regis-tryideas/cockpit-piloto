@@ -1063,6 +1063,13 @@ body.modal-open { overflow: hidden; }
 .breadcrumb a:hover { text-decoration: underline; }
 .breadcrumb span { margin: 0 6px; }
 
+/* Tuning recommendations */
+.tuning-stats { margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+tr.tuning-row td:last-child { white-space: normal; font-size: 12px; color: #c9d1d9; }
+tr.tuning-critical { background: rgba(248,81,73,0.06); }
+tr.tuning-warn { background: rgba(210,153,34,0.06); }
+tr.tuning-ok td:last-child { color: #6e7681; }
+
 tr.runs-row td { background: #0d1117; padding: 6px 14px; }
 .sub-table { font-size: 11px; margin-top: 6px; }
 .sub-table td { padding: 4px 8px; }
