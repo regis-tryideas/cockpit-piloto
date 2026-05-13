@@ -17,20 +17,46 @@
 {% if not data.available %}
 <section class="panel">
   <div class="alert">{{ data.error }}</div>
-  <p class="hint-inline">Para instalar: <code>apt install -y open-iscsi</code>.</p>
+  <p class="hint-inline">Para instalar: <code>apt install -y open-iscsi</code> · após instalar, <code>systemctl enable --now iscsid open-iscsi</code>.</p>
 </section>
 {% else %}
+
+{# ---------- Banner educativo ---------- #}
+<section class="panel iscsi-intro">
+  <h3>⓵ O problema que esta tela resolve</h3>
+  <div class="iscsi-flow">
+    <div class="flow-step">
+      <strong>1.</strong> Target iSCSI cai (rede, controladora, switch)
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <strong>2.</strong> Kernel espera <code>replacement_timeout</code> (default <strong>120 s</strong>)
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step warn">
+      <strong>3.</strong> Processos com IO pendente entram em <strong>D-state</strong> irrecuperável
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step critical">
+      <strong>4.</strong> qemu trava, <code>iscsiadm</code> trava, host requer <strong>reboot</strong>
+    </div>
+  </div>
+  <p class="hint-inline">
+    <strong>Solução:</strong> reduzir <code>replacement_timeout</code> a 15 s + noop_out agressivo.
+    Detecta path morto em ~10 s e libera IO com <code>-EIO</code> em vez de travar para sempre.
+  </p>
+</section>
 
 {# ---------- Cards de overview ---------- #}
 <section class="summary-cards">
   <div class="card">
-    <div class="card-label">Sessões ativas</div>
+    <div class="card-label" data-tip="Sessões iSCSI atualmente conectadas (logged in)">Sessões ativas</div>
     <div class="card-value">{{ data.sessions|length }}</div>
-    <div class="card-foot">{{ data.nodes|length }} target(s) configurado(s)</div>
+    <div class="card-foot">de {{ data.nodes|length }} target(s) configurado(s)</div>
   </div>
   {% set noncomp = data.nodes|rejectattr('compliance.compliant')|list %}
   <div class="card">
-    <div class="card-label" data-tip="Targets cujos timeouts diferem do perfil PVE recomendado (replacement_timeout=15s, noop=5s, etc.)">Conformidade PVE</div>
+    <div class="card-label" data-tip="Targets cujos timeouts diferem do perfil PVE recomendado">Conformidade PVE</div>
     <div class="card-value {% if noncomp %}warn-text{% endif %}">
       {{ data.nodes|length - noncomp|length }} / {{ data.nodes|length }}
     </div>
@@ -39,32 +65,135 @@
     </div>
   </div>
   <div class="card">
-    <div class="card-label" data-tip="Default do open-iscsi é 120s, suficiente pra travar host quando target cai. Recomendado: 15s.">replacement_timeout</div>
-    <div class="card-value small mono">15 s</div>
-    <div class="card-foot">recomendado</div>
+    <div class="card-label" data-tip="Default do iscsid.conf global. Aplica a novas sessões.">iscsid.conf global</div>
+    <div class="card-value small">
+      {% if data.iscsid_conf_compliance %}
+        {% if data.iscsid_conf_compliance.compliant %}
+          <span class="badge ok">conforme PVE</span>
+        {% else %}
+          <span class="badge warn-bg">{{ data.iscsid_conf_compliance.mismatches|length }} divergente(s)</span>
+        {% endif %}
+      {% else %}
+        <span class="badge">ausente</span>
+      {% endif %}
+    </div>
+    <div class="card-foot mono">/etc/iscsi/iscsid.conf</div>
+  </div>
+  {% set total_devs = data.sessions|sum(attribute='devices')|list|length %}
+  <div class="card">
+    <div class="card-label">Block devices via iSCSI</div>
+    <div class="card-value">{{ data.sessions|map(attribute='devices')|map('length')|sum }}</div>
+    <div class="card-foot">discos /dev/sd* expostos</div>
   </div>
 </section>
 
-<div class="alert" style="background:rgba(210,153,34,0.08); border-color:#9e6a03">
-  <strong>Por que isto importa:</strong> quando um target iSCSI fica
-  indisponível e o <code>replacement_timeout</code> é alto (default 120s),
-  processos com I/O pendente entram em D-state irrecuperável. Em VMs do PVE,
-  isso pode escalar até forçar reboot do host. Aplicar o perfil PVE reduz o
-  timeout a 15s e ativa noop-out agressivo (detecta path morto em ~10s).
-</div>
+{# ---------- iscsid.conf global ---------- #}
+<section class="panel">
+  <h3>⓶ Configuração global (<span class="mono">/etc/iscsi/iscsid.conf</span>)
+    <small>aplica a sessões novas — não muda as já conectadas</small>
+  </h3>
+  {% if data.iscsid_conf.exists %}
+  <p class="hint-inline">
+    Este arquivo é lido pelo daemon <code>iscsid</code> e define os defaults
+    para qualquer novo target conectado. Editar aqui não muda sessões já
+    ativas — para isso, faça logout/login (ou use "Aplicar perfil PVE" no
+    card do target abaixo).
+  </p>
+
+  {% if data.iscsid_conf_compliance and not data.iscsid_conf_compliance.compliant %}
+  <div class="alert" style="background:rgba(210,153,34,0.08); border-color:#9e6a03; margin-bottom:12px">
+    <strong>{{ data.iscsid_conf_compliance.mismatches|length }} parâmetro(s)
+    divergem do perfil PVE recomendado:</strong>
+    <ul style="margin:8px 0 0 20px">
+      {% for m in data.iscsid_conf_compliance.mismatches %}
+      <li><span class="mono">{{ m.key }}</span> = <span class="mono">{{ m.actual }}</span>
+          → recomendado <span class="mono">{{ m.expected }}</span></li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="{{ url_for('iscsi_apply_global_pve') }}"
+          style="margin-top:10px"
+          onsubmit="return confirm('Aplicar perfil PVE no /etc/iscsi/iscsid.conf?\n\nAtualiza valores recomendados, faz backup automático, mas só vale para NOVAS sessões.');">
+      <button type="submit" class="btn-small">✓ Aplicar perfil PVE no iscsid.conf</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="flash flash-ok" style="margin-bottom:12px">
+    Defaults globais estão em conformidade com o perfil PVE.
+  </div>
+  {% endif %}
+
+  <details>
+    <summary>Ver parâmetros relevantes do iscsid.conf</summary>
+    <div class="table-wrap" style="margin-top:8px">
+      <table>
+        <thead><tr><th>Chave</th><th>Atual</th><th>Recomendado</th><th>Significado</th></tr></thead>
+        <tbody>
+          {% set descriptions = {
+            'node.session.timeo.replacement_timeout': 'Tempo (s) que o kernel mantém IO em fila esperando reconexão antes de marcar sessão como morta. Default 120 — fonte do D-state em PVE.',
+            'node.conn[0].timeo.noop_out_interval': 'Intervalo (s) entre pings NOP-Out (keep-alive iSCSI).',
+            'node.conn[0].timeo.noop_out_timeout': 'Timeout (s) para o NOP-In de resposta. Sem resposta = path morto.',
+            'node.session.err_timeo.abort_timeout': 'Tempo (s) para abort de um comando SCSI.',
+            'node.session.err_timeo.lu_reset_timeout': 'Tempo (s) para reset de LUN.',
+            'node.session.err_timeo.tgt_reset_timeout': 'Tempo (s) para reset de target inteiro.',
+            'node.startup': 'manual = não conecta automático no boot; automatic = sim.',
+            'node.session.queue_depth': 'Tamanho da fila SCSI por sessão (default 32-128).',
+          } %}
+          {% for k, rec in data.pve_recommended.items() %}
+          {% set actual = data.iscsid_conf.params.get(k) %}
+          <tr class="{% if actual and actual != rec %}tuning-warn{% elif actual == rec %}tuning-ok{% endif %}">
+            <td class="mono">{{ k }}</td>
+            <td class="mono">{{ actual or '(não definido)' }}</td>
+            <td class="mono">{{ rec }}</td>
+            <td>{{ descriptions.get(k, '') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% else %}
+  <p class="hint-inline">
+    Arquivo <code>{{ data.iscsid_conf.path if data.iscsid_conf.path else '/etc/iscsi/iscsid.conf' }}</code>
+    não encontrado. Verifique se o pacote <code>open-iscsi</code> está instalado.
+  </p>
+  {% endif %}
+</section>
+
+{# ---------- Discovery ---------- #}
+<section class="panel">
+  <h3>⓷ Descobrir targets em um portal</h3>
+  <p class="hint-inline">
+    Antes de fazer login, é preciso descobrir quais IQNs um servidor iSCSI
+    expõe em um portal (IP:porta). Equivalente a:
+    <code>iscsiadm -m discovery -t st -p &lt;portal&gt;</code>
+  </p>
+  <form method="post" action="{{ url_for('iscsi_discover') }}" class="repl-form">
+    <div class="repl-form-row">
+      <label class="grow">
+        <span class="filter-label">Portal (ip ou ip:porta — padrão 3260)</span>
+        <input type="text" name="portal" required placeholder="10.0.0.5:3260">
+      </label>
+      <button type="submit">Discovery</button>
+    </div>
+  </form>
+</section>
 
 {# ---------- Sessões ativas ---------- #}
 <section class="panel">
-  <h3>Sessões ativas <small>({{ data.sessions|length }})</small></h3>
+  <h3>⓸ Sessões ativas <small>({{ data.sessions|length }})</small></h3>
   {% if not data.sessions %}
-    <p class="hint-inline">Nenhuma sessão iSCSI ativa.</p>
+    <p class="hint-inline">Nenhuma sessão iSCSI ativa no momento.</p>
   {% else %}
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>SID</th><th>Estado</th><th>Portal</th><th>Target</th>
-          <th data-tip="recovery_tmo = tempo (s) que kernel aguarda reconexão antes de marcar caminho como falhado. Default 5; PVE recomenda manter.">recovery_tmo</th>
+          <th data-tip="Session ID interno do kernel">SID</th>
+          <th data-tip="Estado da sessão no sysfs: LOGGED_IN = saudável; FAILED = problema; FREE = desconectada">Estado</th>
+          <th>Portal (real)</th>
+          <th>Target IQN</th>
+          <th data-tip="Recovery timeout: tempo (s) para o kernel aceitar reconexão antes de marcar caminho como falho">recovery_tmo</th>
+          <th>Devices expostos</th>
           <th>Ações</th>
         </tr>
       </thead>
@@ -80,14 +209,33 @@
             {% else %}
               <span class="badge">—</span>
             {% endif %}
+            {% if s.connection_state %}
+              <br><small class="mono">conn: {{ s.connection_state }}</small>
+            {% endif %}
           </td>
-          <td class="mono">{{ s.portal }}</td>
-          <td class="mono">{{ s.target }}</td>
+          <td class="mono">
+            {{ s.connection_address or s.portal }}{% if s.connection_port %}:{{ s.connection_port }}{% endif %}
+          </td>
+          <td class="mono" style="word-break:break-all">{{ s.target }}</td>
           <td class="mono">{{ s.recovery_tmo or '—' }}</td>
+          <td>
+            {% if s.devices %}
+              {% for d in s.devices %}
+              <div class="iscsi-device">
+                <span class="mono">/dev/{{ d.name }}</span>
+                <span class="badge {% if d.state == 'running' %}ok{% else %}warn-bg{% endif %}">{{ d.state }}</span>
+                <small>{{ d.size_b | format_bytes }}</small>
+                <small class="mono">LUN {{ d.lun.split(':')[-1] }}</small>
+              </div>
+              {% endfor %}
+            {% else %}
+              <small class="mono">—</small>
+            {% endif %}
+          </td>
           <td>
             <form method="post" action="{{ url_for('iscsi_logout_route') }}"
                   style="display:inline"
-                  onsubmit="return confirm('Fazer logout de {{ s.target }}? VMs usando esta sessão vão perder I/O.');">
+                  onsubmit="return confirm('Logout de {{ s.target }}? VMs/processos usando estes devices vão perder IO imediatamente.');">
               <input type="hidden" name="target" value="{{ s.target }}">
               <input type="hidden" name="portal" value="{{ s.portal }}">
               <button type="submit" class="btn-small danger">logout</button>
@@ -103,9 +251,14 @@
 
 {# ---------- Nodes / targets configurados ---------- #}
 <section class="panel">
-  <h3>Targets configurados <small>({{ data.nodes|length }}) — parâmetros e conformidade</small></h3>
+  <h3>⓹ Targets configurados <small>({{ data.nodes|length }}) — parâmetros e ações</small></h3>
+  <p class="hint-inline">
+    Cada target tem seu próprio conjunto de parâmetros (independente do
+    <code>iscsid.conf</code> global). Aqui você ajusta caso-a-caso. Mudanças
+    valem para sessões <strong>novas</strong> — logout/login aplica nas atuais.
+  </p>
   {% if not data.nodes %}
-    <p class="hint-inline">Nenhum target configurado.</p>
+    <p class="hint-inline">Nenhum target configurado. Use o Discovery acima para adicionar.</p>
   {% else %}
   {% for n in data.nodes %}
   <div class="iscsi-node">
@@ -128,7 +281,7 @@
         {% if not n.compliance.compliant %}
         <form method="post" action="{{ url_for('iscsi_apply_profile') }}"
               style="display:inline"
-              onsubmit="return confirm('Aplicar perfil PVE em {{ n.target }}?\n\nReduz replacement_timeout de 120s para 15s e ativa noop-out agressivo. As mudanças entram em efeito em novas sessões — faça logout/login para aplicar nas atuais.');">
+              onsubmit="return confirm('Aplicar perfil PVE neste target?\n\nReduz replacement_timeout para 15s. Para vigorar nas sessões já ativas, faça logout e login depois.');">
           <input type="hidden" name="target" value="{{ n.target }}">
           <input type="hidden" name="portal" value="{{ n.portal }}">
           <button type="submit" class="btn-small">✓ Aplicar perfil PVE</button>
@@ -153,46 +306,124 @@
       </div>
     </div>
 
-    <div class="table-wrap" style="margin-top:8px">
-      <table class="sub-table">
-        <thead><tr>
-          <th>Parâmetro</th>
-          <th>Atual</th>
-          <th>Recomendado (PVE)</th>
-        </tr></thead>
-        <tbody>
-          {% for key in n.params.keys()|sort %}
-          {% set v = n.params[key] %}
-          {% set rec = data.pve_recommended.get(key) %}
-          <tr class="{% if rec and v != rec %}tuning-warn{% endif %}">
-            <td class="mono">{{ key }}</td>
-            <td class="mono">{{ v }}</td>
-            <td class="mono">{{ rec or '—' }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    <details {% if not n.compliance.compliant %}open{% endif %}>
+      <summary>{{ n.params|length }} parâmetro(s) inspecionado(s) ·
+        {{ n.compliance.ok_count }}/{{ n.compliance.total }} em conformidade</summary>
+      <div class="table-wrap" style="margin-top:8px">
+        <table class="sub-table">
+          <thead><tr>
+            <th>Parâmetro</th>
+            <th>Atual</th>
+            <th>Recomendado</th>
+          </tr></thead>
+          <tbody>
+            {% for key in n.params.keys()|sort %}
+            {% set v = n.params[key] %}
+            {% set rec = data.pve_recommended.get(key) %}
+            <tr class="{% if rec and v != rec %}tuning-warn{% endif %}">
+              <td class="mono">{{ key }}</td>
+              <td class="mono">{{ v }}</td>
+              <td class="mono">{{ rec or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
   </div>
   {% endfor %}
   {% endif %}
 </section>
 
+{# ---------- Erros recentes ---------- #}
+{% if data.errors_recent and data.errors_recent.rows %}
+<section class="panel">
+  <h3>⓺ Erros recentes no journal <small>(última 1h, filtro: iscsi/scsi/sense/abort/i/o error)</small></h3>
+  <div class="table-wrap logs-table">
+    <table>
+      <thead><tr><th>Quando</th><th>Prio</th><th>Unit</th><th>Mensagem</th></tr></thead>
+      <tbody>
+        {% for e in data.errors_recent.rows %}
+        <tr class="prio-{{ e.priority }}">
+          <td class="mono">{% if e.ts %}{{ e.ts | format_ts }}{% endif %}</td>
+          <td><span class="badge prio-badge prio-{{ e.priority }}">{{ e.priority_label }}</span></td>
+          <td class="mono">{{ e.unit or e.comm }}</td>
+          <td class="log-msg mono">{{ e.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endif %}
 
-{{ explainer('Por que esses timeouts importam (PVE + iSCSI)', [
+{# ---------- Troubleshooting checklist ---------- #}
+<section class="panel">
+  <h3>⓻ Checklist de troubleshooting</h3>
+  <ol class="iscsi-checklist">
+    <li>
+      <strong>Sessão presa em D-state após queda do target?</strong>
+      Não funciona <code>iscsiadm --logout</code> direto — espera o
+      <code>replacement_timeout</code> expirar. Se já travou, agora só
+      reboot. <strong>Prevenir:</strong> aplicar perfil PVE antes que aconteça.
+    </li>
+    <li>
+      <strong>Aplicou perfil mas continua travando?</strong>
+      As mudanças valem apenas para sessões <em>novas</em>. Faça
+      <code>iscsiadm -m node -T &lt;iqn&gt; -p &lt;portal&gt; --logout</code>
+      e depois login, ou reinicie <code>iscsid</code> em janela de manutenção.
+    </li>
+    <li>
+      <strong>"connect failed" no journal?</strong>
+      Rede ou firewall. Teste com <code>nc -vz &lt;ip&gt; 3260</code> ou
+      <code>telnet &lt;ip&gt; 3260</code>.
+    </li>
+    <li>
+      <strong>"Sense Key : Medium Error"?</strong>
+      Problema no storage backend (disco com bad sector, RAID degradado).
+      Verifique no servidor iSCSI.
+    </li>
+    <li>
+      <strong>VMs travando em IO mas target OK?</strong>
+      Pode ser fila SCSI saturada (queue_depth) ou ARP cache. Verifique
+      <code>iostat -x</code> no host e <code>iscsiadm -m session -P 3</code>
+      para o estado interno.
+    </li>
+    <li>
+      <strong>Configure multipath</strong> se possível. Com 2 paths para o
+      mesmo LUN (2 NICs, 2 portais), queda de um não interrompe IO.
+      Edite <code>/etc/multipath.conf</code> e use <code>multipath -ll</code>
+      para listar.
+    </li>
+    <li>
+      <strong>Configure <code>werror=stop,rerror=stop</code> nas VMs</strong>:
+      em vez de travar com IO error, a VM pausa e dá pra retomar quando o
+      storage volta. Adicione no <code>vm-NNN.conf</code>:
+      <code>scsi0: storage:vm-100-disk-0,werror=stop,rerror=stop</code>.
+    </li>
+  </ol>
+</section>
+
+{% endif %}
+
+{{ explainer('Glossário rápido', [
+  ('Initiator',
+   'Este host (cliente iSCSI). Roda o daemon <code>iscsid</code>.'),
+  ('Target',
+   'Servidor iSCSI que expõe LUNs. Identificado por um IQN
+   (<code>iqn.YYYY-MM.domain:descrição</code>).'),
+  ('Portal',
+   'Endereço de rede (IP:porta) onde o target aceita conexões. Default: 3260.'),
+  ('Session',
+   'Conexão lógica entre initiator e target. Pode ter múltiplas connections (multipath).'),
+  ('LUN',
+   'Logical Unit Number — cada LUN vira um <code>/dev/sd*</code> no host.'),
+  ('NOP-Out / NOP-In',
+   'Pings keep-alive do protocolo iSCSI. Detectam path morto antes do TCP timeout (que pode ser minutos).'),
   ('replacement_timeout',
-   'Tempo que o kernel espera antes de marcar uma sessão como morta. <strong>Default 120 s</strong> — alto demais pra hosts virtualizando VMs. Recomendado: <strong>15 s</strong>. Após esse tempo, IO pendente recebe erro em vez de ficar em D-state perpétuo.'),
-  ('noop_out_interval / noop_out_timeout',
-   'Pings keep-alive no nível iSCSI. A cada N segundos manda um NOP; se não chega resposta em M segundos, marca path morto. Recomendado: 5s/5s (detecta queda em ~10s). Default: 5s/5s no upstream, mas em distros podem variar.'),
-  ('abort_timeout / lu_reset_timeout / tgt_reset_timeout',
-   'Tempo para abortar comandos SCSI, fazer LU reset e target reset. Em targets robustos, valores baixos (15/20/30 s) garantem que o kernel desiste rápido se o target não respondeu.'),
-  ('Multipath',
-   'A melhor proteção: configure <code>multipath</code> com 2+ paths para o mesmo target. Se um path cai, outro assume sem D-state. PVE storage tipo \'iscsi\' suporta isso com config no <code>/etc/multipath.conf</code>.'),
-  ('werror=stop / rerror=stop',
-   'No QEMU: ao configurar discos no PVE, use <code>werror=stop,rerror=stop</code>. Em vez de travar com IO error, a VM pausa e pode ser retomada quando o storage volta.'),
-  ('Aplicar nas sessões atuais',
-   'Mudanças em <code>iscsiadm -m node -o update</code> valem para sessões <em>novas</em>. Para aplicar nas que já estão conectadas, é necessário logout + login.'),
+   'Tempo que o kernel mantém IO esperando reconexão. <strong>O parâmetro mais crítico</strong> — alto causa D-state irrecuperável.'),
+  ('Sense Key',
+   'Código de erro SCSI retornado pelo target. \"Medium Error\" = disco; \"Hardware Error\" = controladora; \"Unit Attention\" = mudança de estado (normal após reset).'),
 ]) }}
 
 {% endblock %}

@@ -457,6 +457,32 @@ def iscsi_logout_route():
     return redirect(url_for("view_iscsi"))
 
 
+@app.post("/iscsi/apply-global-pve")
+@login_required
+def iscsi_apply_global_pve():
+    ok, msg = iscsi_col.apply_pve_profile_global()
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_iscsi"))
+
+
+@app.post("/iscsi/discover")
+@login_required
+def iscsi_discover():
+    portal = request.form.get("portal", "").strip()
+    if not portal:
+        flash(("error", "Informe o portal (ip:port)"))
+        return redirect(url_for("view_iscsi"))
+    ok, result = iscsi_col.discover(portal)
+    if not ok:
+        flash(("error", f"Discovery falhou: {result}"))
+    elif not result:
+        flash(("info", f"Discovery em {portal} retornou 0 targets"))
+    else:
+        flash(("ok", f"Discovery em {portal}: {len(result)} target(s) descoberto(s). "
+                     "Use 'login' nos cards abaixo para conectar."))
+    return redirect(url_for("view_iscsi"))
+
+
 @app.post("/iscsi/login")
 @login_required
 def iscsi_login_route():
