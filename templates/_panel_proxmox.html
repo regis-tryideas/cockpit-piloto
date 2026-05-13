@@ -25,6 +25,13 @@
       <small>sessões e timeouts — útil em qualquer host com open-iscsi</small>
     </span>
   </a>
+  <a class="pve-tool-link" href="{{ url_for('view_nvmeof') }}">
+    <span class="pve-tool-icon">⚡</span>
+    <span>
+      <strong>NVMe-oF</strong>
+      <small>NVMe over Fabrics — TCP/RDMA/FC</small>
+    </span>
+  </a>
 </section>
 {% else %}
 
@@ -41,7 +48,14 @@
     <span class="pve-tool-icon">⛁</span>
     <span>
       <strong>iSCSI</strong>
-      <small>sessões, timeouts, perfil anti-D-state para PVE</small>
+      <small>sessões, timeouts, perfil anti-D-state, montar /dev/sd*</small>
+    </span>
+  </a>
+  <a class="pve-tool-link" href="{{ url_for('view_nvmeof') }}">
+    <span class="pve-tool-icon">⚡</span>
+    <span>
+      <strong>NVMe-oF</strong>
+      <small>discover, connect, montar via TCP/RDMA/FC</small>
     </span>
   </a>
 </section>

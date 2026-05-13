@@ -22,6 +22,8 @@ from collectors import logical_disk as ldisk_col
 from collectors import logs as logs_col
 from collectors import lvm as lvm_col
 from collectors import memory as mem_col
+from collectors import mount as mount_col
+from collectors import nvmeof as nvmeof_col
 from collectors import network as net_col
 from collectors import numa as numa_col
 from collectors import pressure as psi_col
@@ -423,6 +425,17 @@ def apply_tuning():
 @login_required
 def view_iscsi():
     data = iscsi_col.collect()
+    # Enriquece cada device com info de mount + blkid
+    for s in data.get("sessions", []):
+        for d in s.get("devices", []):
+            path = f"/dev/{d['name']}"
+            d["path"] = path
+            d["mountpoint"] = mount_col.mountpoint_of(path)
+            d["blkid"] = mount_col.blkid(path)
+    data["fstab_iscsi"] = [
+        l for l in mount_col.fstab_lines()
+        if "_netdev" in (l.get("options") or "")
+    ]
     return render_template(
         "_panel_iscsi.html",
         tab="proxmox",
@@ -501,6 +514,135 @@ def iscsi_login_route():
     ok, msg = iscsi_col.login(target, portal)
     flash(("ok" if ok else "error", f"Login {target}: {msg}"))
     return redirect(url_for("view_iscsi"))
+
+
+@app.post("/iscsi/mount")
+@login_required
+def iscsi_mount():
+    device = (request.form.get("device") or "").strip()
+    mountpoint = (request.form.get("mountpoint") or "").strip()
+    fstype = (request.form.get("fstype") or "").strip() or None
+    options = (request.form.get("options") or mount_col.DEFAULT_NETDEV_OPTS).strip()
+    persist = bool(request.form.get("persist"))
+    if not device or not mountpoint:
+        flash(("error", "device e mountpoint são obrigatórios"))
+        return redirect(url_for("view_iscsi"))
+    if not mountpoint.startswith("/"):
+        flash(("error", "mountpoint deve ser absoluto"))
+        return redirect(url_for("view_iscsi"))
+    ok, msg = mount_col.mount_device(device, mountpoint, fstype, options, persist)
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_iscsi"))
+
+
+@app.post("/iscsi/umount")
+@login_required
+def iscsi_umount():
+    target = (request.form.get("target") or "").strip()
+    remove_fstab = bool(request.form.get("remove_fstab"))
+    if not target:
+        flash(("error", "target obrigatório"))
+        return redirect(url_for("view_iscsi"))
+    ok, msg = mount_col.umount_target(target, remove_fstab=remove_fstab)
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_iscsi"))
+
+
+@app.get("/nvmeof")
+@login_required
+def view_nvmeof():
+    data = nvmeof_col.collect()
+    return render_template(
+        "_panel_nvmeof.html",
+        tab="proxmox",
+        heading="NVMe-oF",
+        username=g.session["username"],
+        data=data,
+    )
+
+
+@app.post("/nvmeof/discover")
+@login_required
+def nvmeof_discover():
+    transport = (request.form.get("transport") or "tcp").strip()
+    addr = (request.form.get("addr") or "").strip()
+    try:
+        port = int(request.form.get("port") or nvmeof_col.DEFAULT_NVME_PORT)
+    except ValueError:
+        port = nvmeof_col.DEFAULT_NVME_PORT
+    if not addr:
+        flash(("error", "addr obrigatório"))
+        return redirect(url_for("view_nvmeof"))
+    ok, result = nvmeof_col.discover(transport, addr, port)
+    if not ok:
+        flash(("error", f"Discovery falhou: {result}"))
+    elif not result:
+        flash(("info", f"Nenhum subsystem retornado por {addr}:{port}"))
+    else:
+        flash(("ok", f"Discovery em {addr}:{port}: {len(result)} subsystem(s) encontrado(s)."))
+    return redirect(url_for("view_nvmeof"))
+
+
+@app.post("/nvmeof/connect")
+@login_required
+def nvmeof_connect():
+    transport = (request.form.get("transport") or "tcp").strip()
+    addr = (request.form.get("addr") or "").strip()
+    try:
+        port = int(request.form.get("port") or nvmeof_col.DEFAULT_NVME_PORT)
+    except ValueError:
+        port = nvmeof_col.DEFAULT_NVME_PORT
+    nqn = (request.form.get("nqn") or "").strip()
+    if not addr or not nqn:
+        flash(("error", "addr e nqn obrigatórios"))
+        return redirect(url_for("view_nvmeof"))
+    ok, msg = nvmeof_col.connect(transport, addr, port, nqn)
+    flash(("ok" if ok else "error", f"Connect {nqn}: {msg}"))
+    return redirect(url_for("view_nvmeof"))
+
+
+@app.post("/nvmeof/disconnect")
+@login_required
+def nvmeof_disconnect():
+    nqn = (request.form.get("nqn") or "").strip()
+    if not nqn:
+        flash(("error", "nqn obrigatório"))
+        return redirect(url_for("view_nvmeof"))
+    ok, msg = nvmeof_col.disconnect(nqn)
+    flash(("ok" if ok else "error", f"Disconnect {nqn}: {msg}"))
+    return redirect(url_for("view_nvmeof"))
+
+
+@app.post("/nvmeof/mount")
+@login_required
+def nvmeof_mount():
+    device = (request.form.get("device") or "").strip()
+    mountpoint = (request.form.get("mountpoint") or "").strip()
+    fstype = (request.form.get("fstype") or "").strip() or None
+    options = (request.form.get("options") or mount_col.DEFAULT_NETDEV_OPTS).strip()
+    persist = bool(request.form.get("persist"))
+    if not device or not mountpoint:
+        flash(("error", "device e mountpoint são obrigatórios"))
+        return redirect(url_for("view_nvmeof"))
+    if not mountpoint.startswith("/"):
+        flash(("error", "mountpoint deve ser absoluto"))
+        return redirect(url_for("view_nvmeof"))
+    ok, msg = mount_col.mount_device(device, mountpoint, fstype, options, persist)
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_nvmeof"))
+
+
+@app.post("/nvmeof/umount")
+@login_required
+def nvmeof_umount():
+    target = (request.form.get("target") or "").strip()
+    remove_fstab = bool(request.form.get("remove_fstab"))
+    if not target:
+        flash(("error", "target obrigatório"))
+        return redirect(url_for("view_nvmeof"))
+    ok, msg = mount_col.umount_target(target, remove_fstab=remove_fstab)
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_nvmeof"))
 
 
 @app.get("/logs")

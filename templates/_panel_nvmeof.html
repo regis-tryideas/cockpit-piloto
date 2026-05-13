@@ -1,0 +1,318 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import explainer %}
+{% block panel %}
+
+<nav class="breadcrumb">
+  <a href="{{ url_for('view_proxmox') }}">← Proxmox</a>
+  <span>·</span>
+  <span>NVMe-oF</span>
+</nav>
+
+{% with msgs = get_flashed_messages(with_categories=false) %}
+{% for kind, txt in msgs %}
+<div class="flash flash-{{ kind }}">{{ txt }}</div>
+{% endfor %}
+{% endwith %}
+
+{% if not data.available %}
+<section class="panel">
+  <div class="alert">{{ data.error }}</div>
+  <p class="hint-inline">
+    Para instalar: <code>apt install -y nvme-cli</code>. Para usar TCP,
+    o kernel precisa do módulo <code>nvme_tcp</code>:
+    <code>modprobe nvme_tcp</code> (já vem em kernels modernos).
+  </p>
+</section>
+{% else %}
+
+{# ---------- Banner educativo ---------- #}
+<section class="panel iscsi-intro">
+  <h3>⓵ O que é NVMe-oF</h3>
+  <p style="color:#c9d1d9">
+    NVMe over Fabrics é o sucessor do iSCSI para storage de bloco em rede.
+    Usa o mesmo protocolo NVMe (que liga SSDs ao PCIe localmente), mas via
+    rede. <strong>Vantagens vs iSCSI:</strong> latência muito menor (~10 µs
+    com RDMA, ~50 µs com TCP), filas paralelas (até 64k vs 1 no iSCSI),
+    menos overhead de CPU. <strong>Desvantagem:</strong> ferramental ainda
+    em maturação; sintaxe não-trivial para targets multi-path.
+  </p>
+  <div class="iscsi-flow">
+    <div class="flow-step">
+      <strong>Transport</strong><br>
+      <code>tcp</code> (mais comum) ·
+      <code>rdma</code> (RoCE/InfiniBand) ·
+      <code>fc</code> (Fibre Channel)
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <strong>Porta padrão</strong><br>
+      <code>4420</code> (TCP) · porta arbitrária em RDMA
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <strong>Identificador</strong><br>
+      NQN: <code>nqn.YYYY-MM.domain:descrição</code><br>
+      (análogo ao IQN do iSCSI)
+    </div>
+  </div>
+</section>
+
+{# ---------- Cards de status ---------- #}
+<section class="summary-cards">
+  <div class="card">
+    <div class="card-label">Subsystems conectados</div>
+    <div class="card-value">{{ data.subsystems|length }}</div>
+    <div class="card-foot">via nvme list-subsys</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Dispositivos fabric (remotos)</div>
+    <div class="card-value">{{ data.fabric_devices|length }}</div>
+    <div class="card-foot">expostos como /dev/nvmeXnY</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Dispositivos locais (PCIe)</div>
+    <div class="card-value">{{ data.local_devices|length }}</div>
+    <div class="card-foot">SSDs/NVMe internos</div>
+  </div>
+  <div class="card">
+    <div class="card-label" data-tip="Módulos kernel necessários para cada transport. Carregue com 'modprobe nvme_tcp' etc.">Módulos kernel</div>
+    <div class="card-value small">
+      {% for k, v in data.modules.items() %}
+        {% if v %}<span class="badge ok">{{ k }}</span>{% else %}<span class="badge">{{ k }}</span>{% endif %}
+      {% endfor %}
+    </div>
+    <div class="card-foot">verde = carregado</div>
+  </div>
+</section>
+
+{% if data.host_nqn %}
+<section class="panel">
+  <h3>HostNQN deste initiator</h3>
+  <div class="mono" style="background:#0d1117; padding:8px 12px; border-radius:6px; border:1px solid #21262d; font-size:12px; word-break:break-all">
+    {{ data.host_nqn }}
+  </div>
+  <p class="hint-inline">
+    Identificador deste host. Targets podem restringir acesso por NQN.
+    Persistido em <code>/etc/nvme/hostnqn</code>.
+  </p>
+</section>
+{% endif %}
+
+{# ---------- Discovery ---------- #}
+<section class="panel">
+  <h3>⓶ Descobrir subsystems</h3>
+  <p class="hint-inline">
+    Equivale a <code>nvme discover -t &lt;trans&gt; -a &lt;addr&gt; -s &lt;port&gt;</code>.
+    Lista os NQNs expostos pelo servidor — você escolhe qual conectar abaixo.
+  </p>
+  <form method="post" action="{{ url_for('nvmeof_discover') }}" class="repl-form">
+    <div class="repl-form-row">
+      <label>
+        <span class="filter-label">Transport</span>
+        <select name="transport">
+          <option value="tcp" selected>tcp</option>
+          <option value="rdma">rdma</option>
+          <option value="fc">fc</option>
+        </select>
+      </label>
+      <label class="grow">
+        <span class="filter-label">Endereço</span>
+        <input type="text" name="addr" required placeholder="10.0.0.5">
+      </label>
+      <label>
+        <span class="filter-label">Porta</span>
+        <input type="number" name="port" value="4420">
+      </label>
+      <button type="submit">Discovery</button>
+    </div>
+  </form>
+</section>
+
+{# ---------- Connect form ---------- #}
+<section class="panel">
+  <h3>⓷ Conectar a um subsystem</h3>
+  <p class="hint-inline">
+    Após descobrir os NQNs disponíveis, conecte para que apareçam como
+    <code>/dev/nvmeXnY</code>. Para persistir entre reboots, configure
+    em <code>/etc/nvme/discovery.conf</code> e habilite
+    <code>nvmf-autoconnect.service</code>.
+  </p>
+  <form method="post" action="{{ url_for('nvmeof_connect') }}" class="repl-form"
+        onsubmit="return confirm('Conectar ao subsystem? Isto cria um novo dispositivo nvmeXnY.');">
+    <div class="repl-form-row">
+      <label>
+        <span class="filter-label">Transport</span>
+        <select name="transport">
+          <option value="tcp" selected>tcp</option>
+          <option value="rdma">rdma</option>
+          <option value="fc">fc</option>
+        </select>
+      </label>
+      <label class="grow">
+        <span class="filter-label">Endereço</span>
+        <input type="text" name="addr" required>
+      </label>
+      <label>
+        <span class="filter-label">Porta</span>
+        <input type="number" name="port" value="4420">
+      </label>
+      <label class="grow">
+        <span class="filter-label">NQN</span>
+        <input type="text" name="nqn" required
+               placeholder="nqn.2014-08.org.nvmexpress:uuid:...">
+      </label>
+      <button type="submit">Connect</button>
+    </div>
+  </form>
+</section>
+
+{# ---------- Subsystems conectados ---------- #}
+<section class="panel">
+  <h3>⓸ Subsystems conectados</h3>
+  {% if not data.subsystems %}
+    <p class="hint-inline">Nenhum subsystem fabric conectado no momento.</p>
+  {% else %}
+  {% for s in data.subsystems %}
+  <div class="iscsi-node">
+    <div class="iscsi-node-head">
+      <div>
+        <strong class="mono">{{ s.nqn }}</strong>
+        {% if s.model %}<small>· model: {{ s.model }}</small>{% endif %}
+        {% if s.iopolicy %}<span class="badge">iopolicy: {{ s.iopolicy }}</span>{% endif %}
+      </div>
+      <div>
+        <form method="post" action="{{ url_for('nvmeof_disconnect') }}"
+              style="display:inline"
+              onsubmit="return confirm('Disconnect de {{ s.nqn }}? Devices serão removidos do host.');">
+          <input type="hidden" name="nqn" value="{{ s.nqn }}">
+          <button type="submit" class="btn-small danger">disconnect</button>
+        </form>
+      </div>
+    </div>
+    {% if s.paths %}
+    <div class="table-wrap" style="margin-top:8px">
+      <table class="sub-table">
+        <thead><tr><th>Path</th><th>Transport</th><th>Endereço</th><th>Estado</th></tr></thead>
+        <tbody>
+          {% for p in s.paths %}
+          <tr>
+            <td class="mono">{{ p.name }}</td>
+            <td>{{ p.transport }}</td>
+            <td class="mono">{{ p.address }}</td>
+            <td>
+              {% if p.state == 'live' or p.state == 'optimized' %}
+                <span class="badge ok">{{ p.state }}</span>
+              {% else %}
+                <span class="badge warn-bg">{{ p.state }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+</section>
+
+{# ---------- Devices fabric (remotos) com mount ---------- #}
+{% if data.fabric_devices %}
+<section class="panel">
+  <h3>⓹ Devices fabric — montar como ponto de montagem</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Device</th><th>Model</th><th>NQN</th><th>Tamanho</th>
+          <th>Transport</th><th>Mount</th><th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in data.fabric_devices %}
+        <tr>
+          <td class="mono">{{ d.node }}</td>
+          <td>{{ d.model or '—' }}</td>
+          <td class="mono" style="word-break:break-all"><small>{{ d.subsystem_nqn or '—' }}</small></td>
+          <td>{{ d.size_b | format_bytes }}</td>
+          <td>{{ d.transport or '—' }}</td>
+          <td>—</td>
+          <td>
+            <details>
+              <summary class="btn-small">+ montar</summary>
+              <form method="post" action="{{ url_for('nvmeof_mount') }}"
+                    class="mount-form"
+                    onsubmit="return confirm('Montar {{ d.node }}?');">
+                <input type="hidden" name="device" value="{{ d.node }}">
+                <label>mountpoint:
+                  <input type="text" name="mountpoint" required
+                         value="/mnt/nvmeof-{{ d.node|replace('/dev/','') }}">
+                </label>
+                <label>fstype: <input type="text" name="fstype" placeholder="auto-detect"></label>
+                <label>options:
+                  <input type="text" name="options"
+                         value="_netdev,nofail,x-systemd.device-timeout=30s">
+                </label>
+                <label class="inline-check">
+                  <input type="checkbox" name="persist" checked> adicionar ao /etc/fstab
+                </label>
+                <button type="submit" class="btn-small">montar</button>
+              </form>
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{# ---------- Devices locais ---------- #}
+{% if data.local_devices %}
+<section class="panel">
+  <h3>⓺ NVMe locais (PCIe) <small>· informativo</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Device</th><th>Model</th><th>Serial</th><th>Tamanho</th><th>Firmware</th></tr>
+      </thead>
+      <tbody>
+        {% for d in data.local_devices %}
+        <tr>
+          <td class="mono">{{ d.node }}</td>
+          <td>{{ d.model or '—' }}</td>
+          <td class="mono">{{ d.serial or '—' }}</td>
+          <td>{{ d.size_b | format_bytes }}</td>
+          <td class="mono">{{ d.firmware or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% endif %}
+
+{{ explainer('Glossário e dicas', [
+  ('NVMe-oF',
+   'Protocolo de storage block-level via rede. Mais rápido e leve que iSCSI.'),
+  ('Transport',
+   '<strong>tcp</strong>: roda em qualquer rede Ethernet. <strong>rdma</strong>: RoCE/InfiniBand, exige NICs com suporte. <strong>fc</strong>: Fibre Channel via HBA.'),
+  ('NQN',
+   'NVMe Qualified Name. Identificador único do subsystem (target) ou host.'),
+  ('Subsystem',
+   'Conjunto de controllers + namespaces expostos por um target. Análogo ao "target" no iSCSI.'),
+  ('Namespace',
+   'Equivalente ao LUN: a "fatia" do storage que vira <code>/dev/nvmeXnY</code> no host.'),
+  ('Persistência',
+   'Conexões NVMe-oF não persistem entre reboots por default. Para reconectar automático: edite <code>/etc/nvme/discovery.conf</code> e habilite <code>systemctl enable --now nvmf-autoconnect.timer</code>.'),
+  ('multipath',
+   'Diferente do dm-multipath do iSCSI: NVMe-oF tem multipath nativo. Configure <code>iopolicy</code> (round-robin, queue-depth, NUMA).'),
+  ('Mount no fstab',
+   'Use sempre <code>_netdev,nofail</code> para que o boot não trave se o target estiver offline.'),
+]) }}
+
+{% endblock %}

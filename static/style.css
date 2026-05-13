@@ -1144,6 +1144,62 @@ tr.tuning-ok td:last-child { color: #6e7681; }
   font-size: 11px;
 }
 
+/* Mount form inline (iSCSI/NVMe-oF) */
+.iscsi-device-row {
+  display: block;
+  padding: 4px 0;
+  border-bottom: 1px dashed #21262d;
+}
+.iscsi-device-row:last-child { border-bottom: 0; }
+.device-action { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; }
+details.mount-details { margin-top: 4px; }
+details.mount-details summary {
+  display: inline-block;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+details.mount-details summary::-webkit-details-marker { display: none; }
+.mount-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 10px;
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  font-size: 12px;
+  max-width: 480px;
+}
+.mount-form label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mount-form label.inline-check {
+  font-size: 11px;
+  color: #8b949e;
+}
+.mount-form input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  color: #e6edf3;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+}
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #8b949e;
+}
+
 tr.runs-row td { background: #0d1117; padding: 6px 14px; }
 .sub-table { font-size: 11px; margin-top: 6px; }
 .sub-table td { padding: 4px 8px; }

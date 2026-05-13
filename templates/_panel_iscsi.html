@@ -220,11 +220,57 @@
           <td>
             {% if s.devices %}
               {% for d in s.devices %}
-              <div class="iscsi-device">
-                <span class="mono">/dev/{{ d.name }}</span>
-                <span class="badge {% if d.state == 'running' %}ok{% else %}warn-bg{% endif %}">{{ d.state }}</span>
-                <small>{{ d.size_b | format_bytes }}</small>
-                <small class="mono">LUN {{ d.lun.split(':')[-1] }}</small>
+              <div class="iscsi-device-row">
+                <div class="iscsi-device">
+                  <span class="mono">{{ d.path }}</span>
+                  <span class="badge {% if d.state == 'running' %}ok{% else %}warn-bg{% endif %}">{{ d.state }}</span>
+                  <small>{{ d.size_b | format_bytes }}</small>
+                  <small class="mono">LUN {{ d.lun.split(':')[-1] }}</small>
+                  {% if d.blkid and d.blkid.type %}
+                    <span class="badge">{{ d.blkid.type }}</span>
+                  {% endif %}
+                  {% if d.mountpoint %}
+                    <span class="badge ok">→ {{ d.mountpoint }}</span>
+                  {% endif %}
+                </div>
+                {% if d.mountpoint %}
+                  <form method="post" action="{{ url_for('iscsi_umount') }}"
+                        style="display:inline" class="device-action"
+                        onsubmit="return confirm('Desmontar {{ d.mountpoint }}?');">
+                    <input type="hidden" name="target" value="{{ d.mountpoint }}">
+                    <label class="inline-check">
+                      <input type="checkbox" name="remove_fstab"> remover do fstab
+                    </label>
+                    <button type="submit" class="btn-small danger">umount</button>
+                  </form>
+                {% else %}
+                  <details class="mount-details">
+                    <summary class="btn-small">+ montar</summary>
+                    <form method="post" action="{{ url_for('iscsi_mount') }}"
+                          class="mount-form"
+                          onsubmit="return confirm('Montar {{ d.path }}?');">
+                      <input type="hidden" name="device" value="{{ d.path }}">
+                      <label>mountpoint:
+                        <input type="text" name="mountpoint" required
+                               placeholder="/mnt/iscsi-{{ d.name }}"
+                               value="/mnt/iscsi-{{ d.name }}">
+                      </label>
+                      <label>fstype:
+                        <input type="text" name="fstype"
+                               placeholder="auto-detect"
+                               value="{{ d.blkid.type if d.blkid else '' }}">
+                      </label>
+                      <label>options:
+                        <input type="text" name="options"
+                               value="_netdev,nofail,x-systemd.device-timeout=30s">
+                      </label>
+                      <label class="inline-check">
+                        <input type="checkbox" name="persist" checked> adicionar ao /etc/fstab
+                      </label>
+                      <button type="submit" class="btn-small">montar</button>
+                    </form>
+                  </details>
+                {% endif %}
               </div>
               {% endfor %}
             {% else %}
@@ -333,6 +379,38 @@
   {% endfor %}
   {% endif %}
 </section>
+
+{# ---------- /etc/fstab — montagens de rede ---------- #}
+{% if data.fstab_iscsi %}
+<section class="panel">
+  <h3>⓺ Montagens persistidas em <span class="mono">/etc/fstab</span> <small>(linhas com <code>_netdev</code>)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Device</th><th>Mountpoint</th><th>FS</th><th>Opções</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for f in data.fstab_iscsi %}
+        <tr>
+          <td class="mono">{{ f.device }}</td>
+          <td class="mono">{{ f.mountpoint }}</td>
+          <td>{{ f.fstype }}</td>
+          <td class="mono"><small>{{ f.options }}</small></td>
+          <td>
+            {% set mounts = current_mounts if current_mounts is defined else [] %}
+            <span class="badge">/etc/fstab</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="hint-inline">
+    Backups das edições do <code>/etc/fstab</code> ficam em
+    <code>/etc/fstab.cockpit.bak.&lt;timestamp&gt;</code>.
+  </p>
+</section>
+{% endif %}
 
 {# ---------- Erros recentes ---------- #}
 {% if data.errors_recent and data.errors_recent.rows %}
