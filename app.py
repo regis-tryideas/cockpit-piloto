@@ -274,7 +274,7 @@ def view_system():
     from collectors import numa as numa_col_local
     numa_info = numa_col_local.collect()
     numa_nodes = numa_info.get("node_count", 1) if not numa_info.get("error") else 1
-    zfs_avail = zfs_col.detect().get("ok", False)
+    zfs_avail = zfs_col.available().get("ok", False)
 
     data["tuning"] = tuning_col.collect(
         total_ram_b=total_ram_b, cores=cores, pve_vms=pve_vms,
