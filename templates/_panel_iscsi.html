@@ -79,7 +79,6 @@
     </div>
     <div class="card-foot mono">/etc/iscsi/iscsid.conf</div>
   </div>
-  {% set total_devs = data.sessions|sum(attribute='devices')|list|length %}
   <div class="card">
     <div class="card-label">Block devices via iSCSI</div>
     <div class="card-value">{{ data.sessions|map(attribute='devices')|map('length')|sum }}</div>
