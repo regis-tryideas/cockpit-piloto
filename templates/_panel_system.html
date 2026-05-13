@@ -87,7 +87,7 @@
 
 {# ---------- Processos em D-state ---------- #}
 {% if data.d_state %}
-{% set iscsi_stuck = data.d_state|selectattr('wchan','search','iscsi|sbsm|scsi_eh|target_'+'')|list %}
+{% set iscsi_stuck = data.d_state_iscsi_stuck or [] %}
 <section class="panel">
   <h3>
     Processos em D-state (uninterruptible)

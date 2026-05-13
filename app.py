@@ -259,6 +259,13 @@ def view_system():
     data = system_col.collect(top_limit=20)
     data["kernel"] = kernel_col.collect()
     data["d_state"] = system_col.d_state_processes(limit=30)
+    # Pre-filtra D-state com wchan relacionado a iSCSI/SCSI
+    import re as _re
+    _iscsi_re = _re.compile(r"iscsi|sbsm|scsi_eh|target_", _re.IGNORECASE)
+    data["d_state_iscsi_stuck"] = [
+        p for p in data["d_state"]
+        if p.get("wchan") and _iscsi_re.search(p["wchan"])
+    ]
 
     # Contexto pro tuning: RAM, cores, nº de VMs PVE, ZFS, NUMA
     mem = mem_col.collect()
