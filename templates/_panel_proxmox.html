@@ -18,6 +18,13 @@
       <small>disponível mesmo sem PVE — útil em storage servers</small>
     </span>
   </a>
+  <a class="pve-tool-link" href="{{ url_for('view_iscsi') }}">
+    <span class="pve-tool-icon">⛁</span>
+    <span>
+      <strong>iSCSI</strong>
+      <small>sessões e timeouts — útil em qualquer host com open-iscsi</small>
+    </span>
+  </a>
 </section>
 {% else %}
 
@@ -28,6 +35,13 @@
     <span>
       <strong>Replicação de VMs</strong>
       <small>LVM thin e ZFS · jobs com schedule, run-now, histórico</small>
+    </span>
+  </a>
+  <a class="pve-tool-link" href="{{ url_for('view_iscsi') }}">
+    <span class="pve-tool-icon">⛁</span>
+    <span>
+      <strong>iSCSI</strong>
+      <small>sessões, timeouts, perfil anti-D-state para PVE</small>
     </span>
   </a>
 </section>

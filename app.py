@@ -16,6 +16,7 @@ import sampler
 import version
 from collectors import cpu as cpu_col
 from collectors import disk as disk_col
+from collectors import iscsi as iscsi_col
 from collectors import kernel as kernel_col
 from collectors import logical_disk as ldisk_col
 from collectors import logs as logs_col
@@ -409,6 +410,64 @@ def apply_tuning():
 
     flash(("ok", f"{key} = {value} · {msg1} · {msg2}"))
     return redirect(url_for("view_system") + "#tuning")
+
+
+@app.get("/iscsi")
+@login_required
+def view_iscsi():
+    data = iscsi_col.collect()
+    return render_template(
+        "_panel_iscsi.html",
+        tab="proxmox",
+        heading="iSCSI",
+        username=g.session["username"],
+        data=data,
+    )
+
+
+@app.post("/iscsi/apply-pve-profile")
+@login_required
+def iscsi_apply_profile():
+    target = request.form.get("target", "").strip()
+    portal = request.form.get("portal", "").strip()
+    if not target or not portal:
+        flash(("error", "target e portal são obrigatórios"))
+        return redirect(url_for("view_iscsi"))
+    r = iscsi_col.apply_pve_profile(target, portal)
+    if r["all_ok"]:
+        flash(("ok", f"Perfil PVE aplicado em {target} ({portal}). "
+                     "Faça logout/login para sessões ativas pegarem os novos timeouts."))
+    else:
+        errs = [x for x in r["results"] if not x["ok"]]
+        flash(("error", f"Falhas em {len(errs)} parâmetros: " +
+                       "; ".join(f"{e['key']}={e['message']}" for e in errs[:3])))
+    return redirect(url_for("view_iscsi"))
+
+
+@app.post("/iscsi/logout")
+@login_required
+def iscsi_logout_route():
+    target = request.form.get("target", "").strip()
+    portal = request.form.get("portal", "").strip()
+    if not target or not portal:
+        flash(("error", "target e portal são obrigatórios"))
+        return redirect(url_for("view_iscsi"))
+    ok, msg = iscsi_col.logout(target, portal)
+    flash(("ok" if ok else "error", f"Logout {target}: {msg}"))
+    return redirect(url_for("view_iscsi"))
+
+
+@app.post("/iscsi/login")
+@login_required
+def iscsi_login_route():
+    target = request.form.get("target", "").strip()
+    portal = request.form.get("portal", "").strip()
+    if not target or not portal:
+        flash(("error", "target e portal são obrigatórios"))
+        return redirect(url_for("view_iscsi"))
+    ok, msg = iscsi_col.login(target, portal)
+    flash(("ok" if ok else "error", f"Login {target}: {msg}"))
+    return redirect(url_for("view_iscsi"))
 
 
 @app.get("/logs")

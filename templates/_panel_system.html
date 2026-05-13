@@ -87,11 +87,19 @@
 
 {# ---------- Processos em D-state ---------- #}
 {% if data.d_state %}
+{% set iscsi_stuck = data.d_state|selectattr('wchan','search','iscsi|sbsm|scsi_eh|target_'+'')|list %}
 <section class="panel">
   <h3>
     Processos em D-state (uninterruptible)
     <small>· {{ data.d_state|length }} processos bloqueados em I/O ou lock do kernel</small>
   </h3>
+  {% if iscsi_stuck %}
+  <div class="alert" style="margin-bottom:12px">
+    <strong>{{ iscsi_stuck|length }} processo(s) com wchan iSCSI/SCSI detectados.</strong>
+    Pode indicar target iSCSI lento ou caído.
+    <a href="{{ url_for('view_iscsi') }}" class="btn-small">↗ Verificar iSCSI</a>
+  </div>
+  {% endif %}
   <div class="table-wrap">
     <table>
       <thead>

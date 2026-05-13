@@ -1,0 +1,198 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import explainer %}
+{% block panel %}
+
+<nav class="breadcrumb">
+  <a href="{{ url_for('view_proxmox') }}">← Proxmox</a>
+  <span>·</span>
+  <span>iSCSI</span>
+</nav>
+
+{% with msgs = get_flashed_messages(with_categories=false) %}
+{% for kind, txt in msgs %}
+<div class="flash flash-{{ kind }}">{{ txt }}</div>
+{% endfor %}
+{% endwith %}
+
+{% if not data.available %}
+<section class="panel">
+  <div class="alert">{{ data.error }}</div>
+  <p class="hint-inline">Para instalar: <code>apt install -y open-iscsi</code>.</p>
+</section>
+{% else %}
+
+{# ---------- Cards de overview ---------- #}
+<section class="summary-cards">
+  <div class="card">
+    <div class="card-label">Sessões ativas</div>
+    <div class="card-value">{{ data.sessions|length }}</div>
+    <div class="card-foot">{{ data.nodes|length }} target(s) configurado(s)</div>
+  </div>
+  {% set noncomp = data.nodes|rejectattr('compliance.compliant')|list %}
+  <div class="card">
+    <div class="card-label" data-tip="Targets cujos timeouts diferem do perfil PVE recomendado (replacement_timeout=15s, noop=5s, etc.)">Conformidade PVE</div>
+    <div class="card-value {% if noncomp %}warn-text{% endif %}">
+      {{ data.nodes|length - noncomp|length }} / {{ data.nodes|length }}
+    </div>
+    <div class="card-foot">
+      {% if noncomp %}{{ noncomp|length }} fora do perfil{% else %}todos OK{% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-label" data-tip="Default do open-iscsi é 120s, suficiente pra travar host quando target cai. Recomendado: 15s.">replacement_timeout</div>
+    <div class="card-value small mono">15 s</div>
+    <div class="card-foot">recomendado</div>
+  </div>
+</section>
+
+<div class="alert" style="background:rgba(210,153,34,0.08); border-color:#9e6a03">
+  <strong>Por que isto importa:</strong> quando um target iSCSI fica
+  indisponível e o <code>replacement_timeout</code> é alto (default 120s),
+  processos com I/O pendente entram em D-state irrecuperável. Em VMs do PVE,
+  isso pode escalar até forçar reboot do host. Aplicar o perfil PVE reduz o
+  timeout a 15s e ativa noop-out agressivo (detecta path morto em ~10s).
+</div>
+
+{# ---------- Sessões ativas ---------- #}
+<section class="panel">
+  <h3>Sessões ativas <small>({{ data.sessions|length }})</small></h3>
+  {% if not data.sessions %}
+    <p class="hint-inline">Nenhuma sessão iSCSI ativa.</p>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>SID</th><th>Estado</th><th>Portal</th><th>Target</th>
+          <th data-tip="recovery_tmo = tempo (s) que kernel aguarda reconexão antes de marcar caminho como falhado. Default 5; PVE recomenda manter.">recovery_tmo</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in data.sessions %}
+        <tr>
+          <td class="mono">[{{ s.sid }}]</td>
+          <td>
+            {% if s.state == 'LOGGED_IN' %}
+              <span class="badge ok">{{ s.state }}</span>
+            {% elif s.state %}
+              <span class="badge warn-bg">{{ s.state }}</span>
+            {% else %}
+              <span class="badge">—</span>
+            {% endif %}
+          </td>
+          <td class="mono">{{ s.portal }}</td>
+          <td class="mono">{{ s.target }}</td>
+          <td class="mono">{{ s.recovery_tmo or '—' }}</td>
+          <td>
+            <form method="post" action="{{ url_for('iscsi_logout_route') }}"
+                  style="display:inline"
+                  onsubmit="return confirm('Fazer logout de {{ s.target }}? VMs usando esta sessão vão perder I/O.');">
+              <input type="hidden" name="target" value="{{ s.target }}">
+              <input type="hidden" name="portal" value="{{ s.portal }}">
+              <button type="submit" class="btn-small danger">logout</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{# ---------- Nodes / targets configurados ---------- #}
+<section class="panel">
+  <h3>Targets configurados <small>({{ data.nodes|length }}) — parâmetros e conformidade</small></h3>
+  {% if not data.nodes %}
+    <p class="hint-inline">Nenhum target configurado.</p>
+  {% else %}
+  {% for n in data.nodes %}
+  <div class="iscsi-node">
+    <div class="iscsi-node-head">
+      <div>
+        <strong class="mono">{{ n.target }}</strong>
+        <small class="mono">{{ n.portal }},{{ n.tpgt }}</small>
+        {% if n.logged_in %}
+          <span class="badge ok">conectado</span>
+        {% else %}
+          <span class="badge">offline</span>
+        {% endif %}
+        {% if n.compliance.compliant %}
+          <span class="badge ok">PVE-OK</span>
+        {% else %}
+          <span class="badge warn-bg">{{ n.compliance.mismatches|length }} divergente(s)</span>
+        {% endif %}
+      </div>
+      <div>
+        {% if not n.compliance.compliant %}
+        <form method="post" action="{{ url_for('iscsi_apply_profile') }}"
+              style="display:inline"
+              onsubmit="return confirm('Aplicar perfil PVE em {{ n.target }}?\n\nReduz replacement_timeout de 120s para 15s e ativa noop-out agressivo. As mudanças entram em efeito em novas sessões — faça logout/login para aplicar nas atuais.');">
+          <input type="hidden" name="target" value="{{ n.target }}">
+          <input type="hidden" name="portal" value="{{ n.portal }}">
+          <button type="submit" class="btn-small">✓ Aplicar perfil PVE</button>
+        </form>
+        {% endif %}
+        {% if n.logged_in %}
+        <form method="post" action="{{ url_for('iscsi_logout_route') }}"
+              style="display:inline"
+              onsubmit="return confirm('Logout de {{ n.target }}?');">
+          <input type="hidden" name="target" value="{{ n.target }}">
+          <input type="hidden" name="portal" value="{{ n.portal }}">
+          <button type="submit" class="btn-small danger">logout</button>
+        </form>
+        {% else %}
+        <form method="post" action="{{ url_for('iscsi_login_route') }}"
+              style="display:inline">
+          <input type="hidden" name="target" value="{{ n.target }}">
+          <input type="hidden" name="portal" value="{{ n.portal }}">
+          <button type="submit" class="btn-small">login</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="table-wrap" style="margin-top:8px">
+      <table class="sub-table">
+        <thead><tr>
+          <th>Parâmetro</th>
+          <th>Atual</th>
+          <th>Recomendado (PVE)</th>
+        </tr></thead>
+        <tbody>
+          {% for key in n.params.keys()|sort %}
+          {% set v = n.params[key] %}
+          {% set rec = data.pve_recommended.get(key) %}
+          <tr class="{% if rec and v != rec %}tuning-warn{% endif %}">
+            <td class="mono">{{ key }}</td>
+            <td class="mono">{{ v }}</td>
+            <td class="mono">{{ rec or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+</section>
+
+{% endif %}
+
+{{ explainer('Por que esses timeouts importam (PVE + iSCSI)', [
+  ('replacement_timeout',
+   'Tempo que o kernel espera antes de marcar uma sessão como morta. <strong>Default 120 s</strong> — alto demais pra hosts virtualizando VMs. Recomendado: <strong>15 s</strong>. Após esse tempo, IO pendente recebe erro em vez de ficar em D-state perpétuo.'),
+  ('noop_out_interval / noop_out_timeout',
+   'Pings keep-alive no nível iSCSI. A cada N segundos manda um NOP; se não chega resposta em M segundos, marca path morto. Recomendado: 5s/5s (detecta queda em ~10s). Default: 5s/5s no upstream, mas em distros podem variar.'),
+  ('abort_timeout / lu_reset_timeout / tgt_reset_timeout',
+   'Tempo para abortar comandos SCSI, fazer LU reset e target reset. Em targets robustos, valores baixos (15/20/30 s) garantem que o kernel desiste rápido se o target não respondeu.'),
+  ('Multipath',
+   'A melhor proteção: configure <code>multipath</code> com 2+ paths para o mesmo target. Se um path cai, outro assume sem D-state. PVE storage tipo \'iscsi\' suporta isso com config no <code>/etc/multipath.conf</code>.'),
+  ('werror=stop / rerror=stop',
+   'No QEMU: ao configurar discos no PVE, use <code>werror=stop,rerror=stop</code>. Em vez de travar com IO error, a VM pausa e pode ser retomada quando o storage volta.'),
+  ('Aplicar nas sessões atuais',
+   'Mudanças em <code>iscsiadm -m node -o update</code> valem para sessões <em>novas</em>. Para aplicar nas que já estão conectadas, é necessário logout + login.'),
+]) }}
+
+{% endblock %}
