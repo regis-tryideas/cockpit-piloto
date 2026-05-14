@@ -12,7 +12,15 @@
 </script>
 <header class="topbar">
   <div class="brand">
-    <span class="brand-name">{{ version_info.name }}</span>
+    <a href="{{ url_for('view_dashboard') }}" class="brand-link"
+       title="{{ version_info.name }}">
+      <picture class="brand-logo">
+        <source srcset="{{ url_for('static', filename='piloto-cockpit-light.svg') }}"
+                media="(prefers-color-scheme: light)">
+        <img src="{{ url_for('static', filename='piloto-cockpit-darktheme.svg') }}"
+             alt="{{ version_info.name }}">
+      </picture>
+    </a>
     <span class="brand-version" title="{{ version_info.sha or '' }}{% if version_info.branch %} · {{ version_info.branch }}{% endif %}{% if version_info.dirty %} · dirty{% endif %}">
       {{ version_info.label }}
     </span>

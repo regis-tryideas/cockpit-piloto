@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200" width="600" height="200">
+  <title>piloto cockpit</title>
+  <defs>
+    <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#A855F7"/>
+      <stop offset="100%" stop-color="#6B21A8"/>
+    </linearGradient>
+    <style>
+      .piloto-text { font-family: 'Poppins', 'Nunito', system-ui, sans-serif; font-weight: 800; font-size: 110px; fill: #2C3E7B; letter-spacing: -4px; }
+      .cockpit-text { font-family: 'Poppins', 'Nunito', system-ui, sans-serif; font-weight: 500; font-size: 22px; fill: #A855F7; letter-spacing: 8px; }
+    </style>
+  </defs>
+
+  <!-- piloto wordmark -->
+  <text x="40" y="135" class="piloto-text">piloto</text>
+
+  <!-- nuvem roxa sobre o "o" final -->
+  <g transform="translate(370, 30)">
+    <path d="M 10 28 C 10 16, 22 10, 32 16 C 36 6, 52 6, 56 18 C 68 14, 76 26, 68 34 L 16 34 C 8 34, 6 28, 10 28 Z"
+          fill="none" stroke="url(#cloudGrad)" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 56 34 C 68 34, 74 46, 66 52 L 24 52 C 16 52, 14 44, 22 40"
+          fill="none" stroke="url(#cloudGrad)" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+  </g>
+
+  <!-- cockpit pill -->
+  <rect x="370" y="148" width="180" height="38" rx="19" fill="none" stroke="#A855F7" stroke-width="1.8"/>
+  <text x="460" y="173" class="cockpit-text" text-anchor="middle">COCKPIT</text>
+</svg>
