@@ -8,14 +8,21 @@ PVE_NODES_DIR = Path("/etc/pve/nodes")
 
 
 def _pve_pinning_signals() -> dict:
-    """Procura VMs PVE com pinning explícito ou NUMA topology configurada.
+    """Detecta VMs com sinais de PINNING REAL.
 
-    Sinais:
-    - linha 'affinity: <list>' — CPU affinity explícita (sempre intencional)
-    - linha 'numa: 1' — habilita NUMA topology na VM (Proxmox mapeia memória
-      para nodes específicos do host)
+    Diferenciação importante:
+    - 'affinity: <cpu_list>' → pinning real (vCPU→core físico). Único sinal
+      que justifica desabilitar numa_balancing.
+    - 'numa: 1' → apenas expõe topologia NUMA *dentro* da VM (configuração
+      interna do guest). NÃO faz pinning ao host — kernel host continua
+      livre pra mover vCPUs entre cores. NÃO justifica mexer em
+      numa_balancing.
     """
-    info = {"vms_with_affinity": 0, "vms_with_numa": 0, "total_pinned": 0}
+    info = {
+        "vms_with_affinity": 0,    # pinning real
+        "vms_with_numa_only": 0,   # numa virtual exposto, sem pinning
+        "total_pinned": 0,         # = vms_with_affinity
+    }
     if not PVE_NODES_DIR.exists():
         return info
     try:
@@ -42,10 +49,9 @@ def _pve_pinning_signals() -> dict:
                         has_numa = True
                 if has_affinity:
                     info["vms_with_affinity"] += 1
-                if has_numa:
-                    info["vms_with_numa"] += 1
-                if has_affinity or has_numa:
                     info["total_pinned"] += 1
+                elif has_numa:
+                    info["vms_with_numa_only"] += 1
     except OSError:
         pass
     return info
@@ -204,31 +210,38 @@ def collect(total_ram_b: int = 0, cores: int = 0,
             add("transparent_hugepage", thp, "madvise", "ok",
                 "Configuração ótima pra PVE.")
 
-    # ---- NUMA balancing — só recomenda se houver pinning explícito ----
-    # numa_balancing=1 (default) é BENÉFICO para workloads genéricos
-    # (kernel migra páginas pra ficar perto do CPU que está usando).
-    # Só prejudica quando VMs já fazem o trabalho via CPU pinning —
-    # nesse caso numa_balancing fica disputando alocações com o hypervisor.
+    # ---- NUMA balancing — só recomenda se houver PINNING REAL ----
+    # numa_balancing=1 (default) é BENÉFICO para workloads dinâmicos. O
+    # kernel migra páginas pra ficar perto do CPU que as acessa.
+    # Apenas 'affinity:' (CPU pinning físico) justifica desabilitar — o
+    # hypervisor já está cuidando do scheduling. 'numa: 1' sozinho só
+    # expõe topologia NUMA virtual dentro da VM e não impede o kernel
+    # host de migrar — numa_balancing continua útil.
     if numa_nodes >= 2:
         nb = _int(_read_sysctl("kernel.numa_balancing"))
         pinning = _pve_pinning_signals()
-        has_pinning = (pinning["total_pinned"] > 0)
-        if nb is not None and nb == 1 and has_pinning:
+        n_pinned = pinning["total_pinned"]
+        n_numa_only = pinning["vms_with_numa_only"]
+        if nb is not None and nb == 1 and n_pinned > 0:
             add("kernel.numa_balancing", nb, 0, "info",
-                f"Detectei {pinning['total_pinned']} VM(s) com pinning "
-                f"explícito ({pinning['vms_with_affinity']} affinity, "
-                f"{pinning['vms_with_numa']} numa=1). Como o pinning já "
-                "fixa CPU/memória nos nodes certos, <code>numa_balancing</code> "
-                "fica brigando — pode causar latency spikes. Desabilitar "
-                "(<code>= 0</code>) é vantajoso aqui.")
+                f"Detectei <strong>{n_pinned} VM(s) com pinning real "
+                "(linha <code>affinity:</code>)</strong>. Como o pinning "
+                "fixa vCPU→core físico, o kernel não tem onde migrar — "
+                "<code>numa_balancing</code> só adiciona overhead de scan. "
+                "Desabilitar é vantajoso. (Detectei também " + str(n_numa_only) +
+                " VM(s) só com <code>numa: 1</code> — essas não contam: "
+                "numa virtual dentro da VM não restringe o host.)")
         elif nb is not None and nb == 1:
-            # Sem pinning: numa_balancing=1 é a escolha correta.
+            extra = (f" {n_numa_only} VM(s) usam <code>numa: 1</code>, "
+                     "mas isso só expõe topologia NUMA <em>dentro</em> da "
+                     "VM — não restringe o scheduler do host." if n_numa_only else "")
             add("kernel.numa_balancing", nb, 1, "ok",
-                "Host multi-socket mas nenhuma VM com pinning explícito. "
-                "<code>numa_balancing=1</code> (padrão) é o ideal nesse "
-                "cenário — o kernel migra páginas dinamicamente. <strong>"
-                "Não desabilite</strong> a menos que ative pinning em "
-                "VMs sensíveis primeiro.")
+                "Host multi-socket sem pinning real (<code>affinity:</code>) "
+                "detectado." + extra +
+                " <code>numa_balancing=1</code> (padrão) é o ideal — "
+                "o kernel migra páginas dinamicamente para reduzir distância "
+                "memória/CPU. <strong>Não desabilite</strong> a menos que "
+                "ative pinning <code>affinity:</code> em VMs sensíveis primeiro.")
 
     # ---- ZFS arc_max ----
     if has_zfs:
