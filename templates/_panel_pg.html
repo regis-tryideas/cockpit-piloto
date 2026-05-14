@@ -1,0 +1,157 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import explainer %}
+{% block panel %}
+
+<nav class="breadcrumb">
+  <a href="{{ url_for('view_system') }}">← Sistema</a>
+  <span>·</span>
+  <span>Banco PostgreSQL remoto</span>
+</nav>
+
+{% with msgs = get_flashed_messages(with_categories=false) %}
+{% for kind, txt in msgs %}
+<div class="flash flash-{{ kind }}">{{ txt }}</div>
+{% endfor %}
+{% endwith %}
+
+<section class="panel">
+  <h3>O que isto faz</h3>
+  <p style="color:#c9d1d9">
+    Quando habilitado, o cockpit faz <strong>dual-write</strong>: tudo que
+    é gravado no SQLite local (72h de retenção) é também replicado para
+    um PostgreSQL remoto, onde fica disponível pelo tempo que você definir
+    (default: 30 dias). Cada tabela do PG ganha o prefixo do hostname para
+    permitir que vários hosts apontem para o mesmo banco sem conflito.
+  </p>
+  <ul style="color:#c9d1d9; font-size:13px; line-height:1.7">
+    <li>Tabela local <code>metrics_cpu</code> → tabela remota
+        <code>{{ data.cfg.table_prefix }}_metrics_cpu</code></li>
+    <li>Falhas no PG <strong>não bloqueiam</strong> a gravação local.</li>
+    <li>Senha armazenada em SQLite local (file mode 600).
+        Use rede privada ou TLS para o PG.</li>
+  </ul>
+</section>
+
+<section class="panel">
+  <h3>Configuração</h3>
+  <form method="post" action="{{ url_for('save_pg') }}" class="repl-form">
+    <div class="repl-form-row">
+      <label class="checkbox">
+        <input type="checkbox" name="enabled" {% if data.cfg.enabled %}checked{% endif %}>
+        habilitado (dual-write)
+      </label>
+    </div>
+
+    <fieldset>
+      <legend>Conexão</legend>
+      <div class="repl-form-row">
+        <label class="grow">
+          <span class="filter-label">Host</span>
+          <input type="text" name="host" required value="{{ data.cfg.host or '' }}"
+                 placeholder="10.0.0.10 ou pg.lan">
+        </label>
+        <label>
+          <span class="filter-label">Porta</span>
+          <input type="number" name="port" value="{{ data.cfg.port or 5432 }}">
+        </label>
+        <label>
+          <span class="filter-label">User</span>
+          <input type="text" name="username" required value="{{ data.cfg.username or '' }}"
+                 placeholder="cockpit_writer">
+        </label>
+        <label>
+          <span class="filter-label">Senha</span>
+          <input type="password" name="password" value="{{ data.cfg.password or '' }}">
+        </label>
+      </div>
+      <div class="repl-form-row">
+        <label class="grow">
+          <span class="filter-label">Database</span>
+          <input type="text" name="dbname" required value="{{ data.cfg.dbname or '' }}"
+                 placeholder="cockpit_metrics">
+        </label>
+        <label>
+          <span class="filter-label">Schema</span>
+          <input type="text" name="schema_name" value="{{ data.cfg.schema_name or 'public' }}">
+        </label>
+        <label class="grow">
+          <span class="filter-label">Prefix das tabelas (hostname)</span>
+          <input type="text" name="table_prefix" value="{{ data.cfg.table_prefix or data.default_prefix }}">
+        </label>
+        <label>
+          <span class="filter-label">Retenção (dias)</span>
+          <input type="number" name="retention_days" min="1" max="3650"
+                 value="{{ data.cfg.retention_days or 30 }}">
+        </label>
+      </div>
+    </fieldset>
+
+    <div class="repl-form-row">
+      <button type="submit">Salvar configuração</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h3>Ações</h3>
+  <p class="hint-inline">
+    Depois de salvar, valide a conexão e crie as tabelas. As tabelas usam
+    <code>CREATE TABLE IF NOT EXISTS</code> — pode rodar várias vezes
+    sem destruir nada.
+  </p>
+  <form method="post" action="{{ url_for('test_pg') }}" style="display:inline">
+    <button type="submit" class="btn-small">⇄ Testar conexão</button>
+  </form>
+  <form method="post" action="{{ url_for('init_pg') }}" style="display:inline"
+        onsubmit="return confirm('Criar/verificar 9 tabelas no PG com prefixo {{ data.cfg.table_prefix }}_? Idempotente, mas a operação executa CREATE no servidor remoto.');">
+    <button type="submit" class="btn-small">⊕ Inicializar / criar tabelas</button>
+  </form>
+
+  {% if data.cfg.last_test_at %}
+  <div style="margin-top:14px; padding:10px; background:#0d1117; border:1px solid #21262d; border-radius:6px; font-size:12px">
+    <div><strong>Último teste:</strong>
+      {{ data.cfg.last_test_at | format_ts }} ·
+      {% if data.cfg.last_test_ok %}<span class="badge ok">OK</span>
+      {% else %}<span class="badge critical-bg">FAIL</span>{% endif %}
+      <small class="mono">{{ data.cfg.last_test_msg or '' }}</small>
+    </div>
+    {% if data.cfg.last_init_at %}
+    <div style="margin-top:6px"><strong>Último init:</strong>
+      {{ data.cfg.last_init_at | format_ts }} ·
+      <small class="mono">{{ data.cfg.last_init_msg or '' }}</small>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+
+{% if data.tables %}
+<section class="panel">
+  <h3>Tabelas no PG <small>({{ data.tables|length }} encontradas com prefix <code>{{ data.cfg.table_prefix }}_</code>)</small></h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tabela</th><th>Rows</th><th>Tamanho</th></tr></thead>
+      <tbody>
+        {% for t in data.tables %}
+        <tr>
+          <td class="mono">{{ t.name }}</td>
+          <td>{{ '{:,}'.format(t.rows) }}</td>
+          <td>{{ t.size }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{{ explainer('Detalhes técnicos', [
+  ('Dual-write', 'Sampler grava primeiro no SQLite local (atômico, sempre vai), depois tenta o PG remoto em best-effort. Erro no PG é silenciado para não bloquear coleta.'),
+  ('Idempotência', 'INSERT ... ON CONFLICT DO NOTHING — se o sampler resampear o mesmo ts (raro), não duplica.'),
+  ('Retenção PG', 'Independente da retenção local (72h). Configure aqui o quanto quer manter no PG (ex: 30, 90, 365 dias).'),
+  ('Múltiplos hosts', 'Aponte vários cockpits para o mesmo DB usando prefix diferente em cada (default: hostname). Útil para consolidar visão de fleet.'),
+  ('Permissões PG', 'O usuário precisa de: CONNECT no DB, CREATE no schema (para init), INSERT/SELECT/DELETE nas tabelas. Mínimo seguro:<br><code>GRANT USAGE,CREATE ON SCHEMA public TO cockpit_writer;</code><br><code>GRANT INSERT,SELECT,DELETE ON ALL TABLES IN SCHEMA public TO cockpit_writer;</code>'),
+  ('Segurança', 'Senha em /root/cockpit/cockpit.db (modo 0644 — restrinja com chmod 600 se quiser). Para produção, use rede privada + sslmode=require no postgres. Para sslmode customizado, edite collectors/db.py:_pg_connect().'),
+]) }}
+
+{% endblock %}

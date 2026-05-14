@@ -705,6 +705,64 @@ def _list_hosts_backups():
     return out
 
 
+@app.get("/system/pg")
+@login_required
+def view_pg():
+    cfg = db.pg_get_config()
+    tables = db.pg_list_existing_tables() if cfg.get("enabled") and cfg.get("host") else []
+    return render_template(
+        "_panel_pg.html",
+        tab="system",
+        heading="Banco PostgreSQL remoto",
+        username=g.session["username"],
+        data={"cfg": cfg, "tables": tables,
+              "default_prefix": db.pg_default_prefix()},
+    )
+
+
+@app.post("/system/pg/save")
+@login_required
+def save_pg():
+    f = request.form
+    try:
+        port = int(f.get("port") or 5432)
+    except ValueError:
+        port = 5432
+    try:
+        retention = int(f.get("retention_days") or 30)
+    except ValueError:
+        retention = 30
+    db.pg_save_config(
+        enabled=bool(f.get("enabled")),
+        host=(f.get("host") or "").strip(),
+        port=port,
+        username=(f.get("username") or "").strip(),
+        password=f.get("password") or "",  # senha pode ter espaços
+        dbname=(f.get("dbname") or "").strip(),
+        schema_name=(f.get("schema_name") or "public").strip(),
+        table_prefix=(f.get("table_prefix") or "").strip() or db.pg_default_prefix(),
+        retention_days=retention,
+    )
+    flash(("ok", "Configuração salva."))
+    return redirect(url_for("view_pg"))
+
+
+@app.post("/system/pg/test")
+@login_required
+def test_pg():
+    ok, msg = db.pg_test_connection()
+    flash(("ok" if ok else "error", f"Test: {msg}"))
+    return redirect(url_for("view_pg"))
+
+
+@app.post("/system/pg/init")
+@login_required
+def init_pg():
+    ok, msg = db.pg_init_schema()
+    flash(("ok" if ok else "error", f"Init schema: {msg}"))
+    return redirect(url_for("view_pg"))
+
+
 @app.get("/system/hosts")
 @login_required
 def view_hosts_editor():
