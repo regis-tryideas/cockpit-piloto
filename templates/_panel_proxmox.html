@@ -361,6 +361,15 @@
     return { factor, unit: UNITS[i] };
   }
 
+  function themeColors(){
+    const cs = getComputedStyle(document.documentElement);
+    return {
+      text:  cs.getPropertyValue('--text-2').trim()      || '#c9d1d9',
+      muted: cs.getPropertyValue('--text-muted').trim()  || '#8b949e',
+      grid:  cs.getPropertyValue('--border-soft').trim() || '#21262d',
+    };
+  }
+
   function makeChart(canvasId, datasets, yLabel){
     const ctx = document.getElementById(canvasId).getContext('2d');
     const isBytes = yLabel && (yLabel.indexOf("byte") >= 0);
@@ -370,6 +379,7 @@
       if (fu) return `${(v / fu.factor).toFixed(2)} ${fu.unit}${perSec ? "/s" : ""}`;
       return Number(v ?? 0).toFixed(2);
     };
+    const c = themeColors();
     return new Chart(ctx, {
       type: 'line',
       data: { datasets },
@@ -377,7 +387,7 @@
         animation: false, responsive: true, maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { labels: { color: '#c9d1d9', boxWidth: 12 } },
+          legend: { labels: { color: c.text, boxWidth: 12 } },
           tooltip: {
             mode: 'index', intersect: false,
             callbacks: {
@@ -403,15 +413,15 @@
           },
         },
         scales: {
-          x: { type: 'time', ticks: { color: '#8b949e', maxRotation: 0 },
-               grid: { color: '#21262d' } },
+          x: { type: 'time', ticks: { color: c.muted, maxRotation: 0 },
+               grid: { color: c.grid } },
           y: {
             ticks: {
-              color: '#8b949e',
+              color: c.muted,
               callback: (v) => isBytes ? fmt(v) : v,
             },
-            grid: { color: '#21262d' },
-            title: { display: true, text: fu ? `${yLabel} (${fu.unit}${perSec ? '/s' : ''})` : yLabel, color: '#8b949e' },
+            grid: { color: c.grid },
+            title: { display: true, text: fu ? `${yLabel} (${fu.unit}${perSec ? '/s' : ''})` : yLabel, color: c.muted },
           },
         },
       },
@@ -428,29 +438,36 @@
 
     const ts = (r) => r.ts * 1000;
     destroyCharts();
+    // Palette com bom contraste em dark e light
+    const C = ['#1f6feb', '#1a7f37', '#bc4c00', '#8250df', '#cf222e'];
     charts.cpu = makeChart('vm-chart-cpu', [{
       label: 'CPU %', data: rows.map(r => ({x: ts(r), y: r.cpu_pct})),
-      borderColor: '#58a6ff', backgroundColor: '#58a6ff33',
+      borderColor: C[0], backgroundColor: C[0] + '33',
       tension: 0.2, pointRadius: 0, borderWidth: 1.5,
     }], '%');
     charts.mem = makeChart('vm-chart-mem', [{
       label: 'Mem usada', data: rows.map(r => ({x: ts(r), y: r.mem_used_b})),
-      borderColor: '#3fb950', backgroundColor: '#3fb95033',
+      borderColor: C[1], backgroundColor: C[1] + '33',
       tension: 0.2, pointRadius: 0, borderWidth: 1.5,
     }], 'bytes');
     charts.disk = makeChart('vm-chart-disk', [
       { label: 'read B/s',  data: rows.map(r => ({x: ts(r), y: r.diskread_bps  || 0})),
-        borderColor: '#58a6ff', tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
+        borderColor: C[0], tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
       { label: 'write B/s', data: rows.map(r => ({x: ts(r), y: r.diskwrite_bps || 0})),
-        borderColor: '#f0883e', tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
+        borderColor: C[2], tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
     ], 'bytes/s');
     charts.net = makeChart('vm-chart-net', [
       { label: 'in B/s',  data: rows.map(r => ({x: ts(r), y: r.netin_bps  || 0})),
-        borderColor: '#3fb950', tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
+        borderColor: C[1], tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
       { label: 'out B/s', data: rows.map(r => ({x: ts(r), y: r.netout_bps || 0})),
-        borderColor: '#a371f7', tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
+        borderColor: C[3], tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
     ], 'bytes/s');
   }
+
+  // Re-render dos charts do modal quando o tema muda
+  document.addEventListener('cockpit:theme-changed', () => {
+    if (currentVmid) loadVmData();
+  });
 
   async function loadVmSnapshots(){
     if (!currentVmid) return;

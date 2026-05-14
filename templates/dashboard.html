@@ -232,6 +232,8 @@ window.cockpitSoftRefresh = async function(){
                                  : 'piloto-cockpit-darktheme.svg';
       img.src = img.src.replace(/piloto-cockpit-(light|darktheme)\.svg/, next);
     });
+    // Avisa os charts pra reler cores e re-renderizar
+    document.dispatchEvent(new CustomEvent('cockpit:theme-changed', { detail: { theme: t } }));
   }
   setTheme(document.documentElement.dataset.theme || 'dark');
   themeBtn.addEventListener('click', () => {

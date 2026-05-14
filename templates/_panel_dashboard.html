@@ -169,8 +169,8 @@
 {{ history_block(
   'dash-cpu-chart', 'Uso de CPU (%)', 'cpu',
   '[
-    {"label":"busy","key":"busy","color":"#58a6ff"},
-    {"label":"iowait","key":"iowait","color":"#f0883e"}
+    {"label":"busy","key":"busy","color":"#1f6feb"},
+    {"label":"iowait","key":"iowait","color":"#bc4c00"}
   ]',
   y_max=100, y_label='%'
 ) }}
@@ -178,8 +178,8 @@
 {{ history_block(
   'dash-mem-chart', 'Memória (%)', 'mem',
   '[
-    {"label":"RAM","key":"used_pct","color":"#3fb950"},
-    {"label":"Swap","key":"swap_pct","color":"#f0883e"}
+    {"label":"RAM","key":"used_pct","color":"#1a7f37"},
+    {"label":"Swap","key":"swap_pct","color":"#bc4c00"}
   ]',
   y_max=100, y_label='%'
 ) }}
@@ -187,9 +187,9 @@
 {{ history_block(
   'dash-psi-chart', 'PSI some (%)', 'psi',
   '[
-    {"label":"CPU","key":"cpu_some10","color":"#58a6ff"},
-    {"label":"Mem","key":"mem_some10","color":"#3fb950"},
-    {"label":"IO","key":"io_some10","color":"#a371f7"}
+    {"label":"CPU","key":"cpu_some10","color":"#1f6feb"},
+    {"label":"Mem","key":"mem_some10","color":"#1a7f37"},
+    {"label":"IO","key":"io_some10","color":"#8250df"}
   ]',
   y_label='%'
 ) }}
@@ -221,9 +221,9 @@
 {{ history_block(
   'dash-load-chart', 'Load average', 'cpu',
   '[
-    {"label":"1m","key":"load1","color":"#58a6ff"},
-    {"label":"5m","key":"load5","color":"#a371f7"},
-    {"label":"15m","key":"load15","color":"#3fb950"}
+    {"label":"1m","key":"load1","color":"#1f6feb"},
+    {"label":"5m","key":"load5","color":"#8250df"},
+    {"label":"15m","key":"load15","color":"#1a7f37"}
   ]',
   y_label='load'
 ) }}
@@ -231,16 +231,16 @@
 {{ history_block(
   'dash-procs-chart', 'Processos por estado', 'procs',
   '[
-    {"label":"running","key":"running","color":"#3fb950"},
-    {"label":"disk wait","key":"disk_sleep","color":"#f0883e"},
-    {"label":"zombie","key":"zombie","color":"#f85149"}
+    {"label":"running","key":"running","color":"#1a7f37"},
+    {"label":"disk wait","key":"disk_sleep","color":"#bc4c00"},
+    {"label":"zombie","key":"zombie","color":"#cf222e"}
   ]',
   y_label='count'
 ) }}
 
 {{ history_block(
   'dash-fd-chart', 'File descriptors em uso', 'procs',
-  '[{"label":"FDs","key":"fd_allocated","color":"#58a6ff"}]',
+  '[{"label":"FDs","key":"fd_allocated","color":"#1f6feb"}]',
   y_label='fds'
 ) }}
 </div>

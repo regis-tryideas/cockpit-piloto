@@ -38,6 +38,17 @@
       const ctx = canvas.getContext("2d");
       let chart = null;
 
+      // Lê cores do tema atual via CSS vars (atualiza em troca de tema)
+      function themeColors(){
+        const cs = getComputedStyle(document.documentElement);
+        return {
+          text:  (cs.getPropertyValue('--text-2').trim()      || '#c9d1d9'),
+          muted: (cs.getPropertyValue('--text-muted').trim()  || '#8b949e'),
+          grid:  (cs.getPropertyValue('--border-soft').trim() || '#21262d'),
+          bg:    (cs.getPropertyValue('--surface').trim()     || '#161b22'),
+        };
+      }
+
       // Unidade fixa do gráfico (recalculada a cada load com base no maior
       // valor visto). Evita o eixo Y misturar kB/MB/GB e dificultar leitura.
       let fixedUnit = null;     // { factor, unit, perSec }
@@ -106,8 +117,9 @@
             if (!groups[g]) groups[g] = [];
             groups[g].push({ x: r.ts * 1000, y: r[valKey] });
           });
-          const palette = ["#58a6ff", "#3fb950", "#f0883e", "#a371f7",
-                           "#f85149", "#d29922", "#bc8cff", "#56d4dd"];
+          // Palette com bom contraste em fundo escuro E claro
+          const palette = ["#1f6feb", "#1a7f37", "#bc4c00", "#8250df",
+                           "#cf222e", "#bf8700", "#0969da", "#6639ba"];
           const datasets = Object.keys(groups).map((g, i) => ({
             label: g,
             data: groups[g],
@@ -134,6 +146,7 @@
 
       function render(datasets){
         if (chart) chart.destroy();
+        const c = themeColors();
         // Calcula unidade fixa a partir do maior valor entre todos os datasets
         if (cfg.valueFormat &&
             (cfg.valueFormat === "bytes" || cfg.valueFormat === "bytes_per_sec"
@@ -151,7 +164,7 @@
             maintainAspectRatio: false,
             interaction: { mode: "index", intersect: false },
             plugins: {
-              legend: { labels: { color: "#c9d1d9", boxWidth: 12 } },
+              legend: { labels: { color: c.text, boxWidth: 12 } },
               tooltip: {
                 mode: "index", intersect: false,
                 callbacks: {
@@ -179,19 +192,19 @@
               x: {
                 type: "time",
                 time: { tooltipFormat: "yyyy-MM-dd HH:mm:ss" },
-                ticks: { color: "#8b949e", maxRotation: 0, autoSkip: true },
-                grid: { color: "#21262d" },
+                ticks: { color: c.muted, maxRotation: 0, autoSkip: true },
+                grid: { color: c.grid },
               },
               y: Object.assign(
                 {
                   ticks: {
-                    color: "#8b949e",
+                    color: c.muted,
                     callback: (v) => cfg.valueFormat ? applyFormat(v) : v,
                   },
-                  grid: { color: "#21262d" },
+                  grid: { color: c.grid },
                 },
                 cfg.yMax !== undefined ? { max: cfg.yMax } : {},
-                cfg.yLabel ? { title: { display: true, text: cfg.yLabel, color: "#8b949e" } } : {}
+                cfg.yLabel ? { title: { display: true, text: cfg.yLabel, color: c.muted } } : {}
               ),
             },
           },
@@ -221,6 +234,8 @@
 
       // Soft refresh recarrega os dados do gráfico mantendo a janela atual
       canvas.addEventListener("cockpit:refresh", () => load(currentWindow));
+      // Re-render quando o tema mudar (pra pegar text/grid color novo)
+      document.addEventListener("cockpit:theme-changed", () => load(currentWindow));
 
       load(currentWindow);
     })();
