@@ -317,7 +317,7 @@ def collect() -> dict:
         cat_counts[cat] = cat_counts.get(cat, 0) + 1
 
     return {
-        "items": items,
+        "results": items,
         "summary": summary,
         "categories": sorted(cat_counts.keys()),
         "category_counts": cat_counts,

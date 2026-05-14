@@ -33,7 +33,7 @@
   </div>
   <div class="card">
     <div class="card-label">Total checado</div>
-    <div class="card-value">{{ data.items|length }}</div>
+    <div class="card-value">{{ data.results|length }}</div>
     <div class="card-foot mono">gerado em {{ data.generated_at | format_ts }}</div>
   </div>
 </section>
@@ -54,7 +54,7 @@
 </section>
 
 <section class="panel">
-  <h3>Resultados <small>(<span id="checkup-visible">{{ data.items|length }}</span> visíveis)</small></h3>
+  <h3>Resultados <small>(<span id="checkup-visible">{{ data.results|length }}</span> visíveis)</small></h3>
   <div class="table-wrap">
     <table id="checkup-table">
       <thead>
@@ -69,7 +69,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for it in data.items %}
+        {% for it in data.results %}
         <tr class="checkup-row" data-sev="{{ it.status }}" data-cat="{{ it.category }}">
           <td>
             {% if it.status == 'critical' %}<span class="badge critical-bg">crit</span>
