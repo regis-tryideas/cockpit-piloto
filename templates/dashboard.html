@@ -14,12 +14,10 @@
   <div class="brand">
     <a href="{{ url_for('view_dashboard') }}" class="brand-link"
        title="{{ version_info.name }}">
-      <picture class="brand-logo">
-        <source srcset="{{ url_for('static', filename='piloto-cockpit-light.svg') }}"
-                media="(prefers-color-scheme: light)">
+      <span class="brand-logo">
         <img src="{{ url_for('static', filename='piloto-cockpit-darktheme.svg') }}"
              alt="{{ version_info.name }}">
-      </picture>
+      </span>
     </a>
     <span class="brand-version" title="{{ version_info.sha or '' }}{% if version_info.branch %} · {{ version_info.branch }}{% endif %}{% if version_info.dirty %} · dirty{% endif %}">
       {{ version_info.label }}
@@ -48,6 +46,7 @@
   </nav>
   <div class="user">
     <span>{{ username }}</span>
+    <button id="theme-toggle" type="button" title="Alternar tema claro/escuro">🌙</button>
     <button id="autorefresh" type="button" data-on="0">Auto-refresh: off</button>
     <a class="logout" href="{{ url_for('logout') }}">sair</a>
   </div>
@@ -220,6 +219,25 @@ window.cockpitSoftRefresh = async function(){
 
   // Sorters em todas as tabelas
   window.cockpitInstallSorters();
+
+  // Theme toggle (light/dark)
+  const themeBtn = document.getElementById('theme-toggle');
+  function setTheme(t) {
+    document.documentElement.dataset.theme = t;
+    try { localStorage.setItem('cockpit.theme', t); } catch(e) {}
+    themeBtn.textContent = t === 'light' ? '🌙' : '☀';
+    // Atualiza src dos logos pra refletir o tema
+    document.querySelectorAll('.brand-logo img, .login-logo img').forEach(img => {
+      const next = t === 'light' ? 'piloto-cockpit-light.svg'
+                                 : 'piloto-cockpit-darktheme.svg';
+      img.src = img.src.replace(/piloto-cockpit-(light|darktheme)\.svg/, next);
+    });
+  }
+  setTheme(document.documentElement.dataset.theme || 'dark');
+  themeBtn.addEventListener('click', () => {
+    const cur = document.documentElement.dataset.theme || 'dark';
+    setTheme(cur === 'light' ? 'dark' : 'light');
+  });
 })();
 </script>
 {% endblock %}

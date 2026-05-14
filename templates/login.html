@@ -3,12 +3,10 @@
 {% block body %}
 <div class="login-wrap">
   <form method="post" action="{{ url_for('login') }}" class="login-card">
-    <picture class="login-logo">
-      <source srcset="{{ url_for('static', filename='piloto-cockpit-light.svg') }}"
-              media="(prefers-color-scheme: light)">
+    <div class="login-logo">
       <img src="{{ url_for('static', filename='piloto-cockpit-darktheme.svg') }}"
            alt="{{ version_info.name }}">
-    </picture>
+    </div>
     <p class="subtitle">
       Monitor de recursos da máquina
       <span class="login-version">{{ version_info.label }}{% if version_info.sha %} · <span class="mono">{{ version_info.sha }}</span>{% endif %}</span>
