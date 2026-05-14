@@ -266,6 +266,204 @@
 ) }}
 {% endif %}
 
+{# ---------- Otimização (Tuners + Pool + Dataset + Criar) ---------- #}
+{% if data.kernel_tuners %}
+<section class="panel">
+  <h3>⚙ Tuners do módulo ZFS <small>· perfil SSD</small></h3>
+  <p class="hint-inline">
+    Parâmetros aplicados em <code>/sys/module/zfs/parameters/*</code> e
+    persistidos em <code>/etc/modprobe.d/zfs.conf</code>. Vigora imediato
+    + sobrevive reboot.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Parâmetro</th><th>Atual</th><th>Recomendado SSD</th><th>Significado</th><th>Aplicar</th></tr>
+      </thead>
+      <tbody>
+        {% for key, t in data.kernel_tuners.items() %}
+        <tr class="{% if not t.matches %}tuning-warn{% else %}tuning-ok{% endif %}">
+          <td class="mono">{{ key }}</td>
+          <td class="mono">{{ t.current or '—' }}</td>
+          <td class="mono">{{ t.recommended }}</td>
+          <td><small>{{ t.desc }}</small></td>
+          <td>
+            {% if not t.matches %}
+            <form method="post" action="{{ url_for('zfs_kernel_set') }}"
+                  style="display:inline"
+                  onsubmit="return confirm('Aplicar {{ key }} = {{ t.recommended }}? Mudança imediata + persistida.');">
+              <input type="hidden" name="key" value="{{ key }}">
+              <input type="hidden" name="value" value="{{ t.recommended }}">
+              <button type="submit" class="btn-small">✓ Aplicar</button>
+            </form>
+            {% else %}
+              <span style="color:#3fb950">✓</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <form method="post" action="{{ url_for('zfs_apply_kernel_ssd') }}" style="margin-top:10px"
+        onsubmit="return confirm('Aplicar TODOS os tuners SSD de uma vez? Mudança imediata + persistida em /etc/modprobe.d/zfs.conf.');">
+    <button type="submit" class="btn-small">Aplicar perfil SSD completo (todos os tuners)</button>
+  </form>
+</section>
+{% endif %}
+
+{% if data.pools %}
+<section class="panel">
+  <h3>⚙ Otimização por pool</h3>
+  <p class="hint-inline">
+    Aplica <code>autotrim=on</code> (e outras props futuras) em pools SSD/NVMe.
+    Equivalente a <code>zpool set autotrim=on &lt;pool&gt;</code>.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Pool</th><th>autotrim</th><th>ashift</th><th>%cap</th><th>Aplicar</th></tr>
+      </thead>
+      <tbody>
+        {% for p in data.pools %}
+        <tr class="{% if p.needs_tuning %}tuning-warn{% else %}tuning-ok{% endif %}">
+          <td><strong class="mono">{{ p.name }}</strong></td>
+          <td class="mono">{{ p.autotrim }}</td>
+          <td class="mono">{{ p.props.ashift if p.props else '—' }}</td>
+          <td>{{ p.capacity }}</td>
+          <td>
+            <form method="post" action="{{ url_for('zfs_pool_apply_profile') }}"
+                  style="display:inline"
+                  onsubmit="return confirm('Aplicar perfil SSD em {{ p.name }}? Liga autotrim.');">
+              <input type="hidden" name="name" value="{{ p.name }}">
+              <input type="hidden" name="profile" value="ssd">
+              <button type="submit" class="btn-small">SSD</button>
+            </form>
+            <form method="post" action="{{ url_for('zfs_pool_apply_profile') }}"
+                  style="display:inline"
+                  onsubmit="return confirm('Aplicar perfil NVMe em {{ p.name }}?');">
+              <input type="hidden" name="name" value="{{ p.name }}">
+              <input type="hidden" name="profile" value="nvme">
+              <button type="submit" class="btn-small">NVMe</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if data.datasets %}
+<section class="panel">
+  <h3>⚙ Otimização por dataset
+    <small>· perfis 'vms' (recordsize=16K) e 'vm_db' (recordsize=8K)</small>
+  </h3>
+  <p class="hint-inline">
+    Comparação contra perfil sugerido (heurística: nomes com 'db' usam
+    perfil <code>vm_db</code>, demais usam <code>vms</code>). Aplique o
+    perfil completo ou ajuste prop individual.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Dataset</th>
+          <th>Perfil sugerido</th>
+          <th>Conformidade</th>
+          <th>Divergências</th>
+          <th>Aplicar</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in data.datasets %}
+        {% if d.compliance %}
+        <tr class="{% if not d.compliance.compliant %}tuning-warn{% else %}tuning-ok{% endif %}">
+          <td class="mono">{{ d.name }}</td>
+          <td><span class="badge">{{ d.suggested_profile }}</span></td>
+          <td>{{ d.compliance.ok_count }}/{{ d.compliance.total }}</td>
+          <td>
+            {% if d.compliance.mismatches %}
+              {% for m in d.compliance.mismatches %}
+              <div><span class="mono">{{ m.key }}</span>:
+                <span class="mono">{{ m.current }}</span> →
+                <span class="mono">{{ m.expected }}</span></div>
+              {% endfor %}
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if not d.compliance.compliant %}
+            <form method="post" action="{{ url_for('zfs_dataset_apply_profile') }}"
+                  style="display:inline"
+                  onsubmit="return confirm('Aplicar perfil {{ d.suggested_profile }} em {{ d.name }}?\n\nAjusta compression, atime, xattr, sync, recordsize, primarycache.');">
+              <input type="hidden" name="name" value="{{ d.name }}">
+              <input type="hidden" name="profile" value="{{ d.suggested_profile }}">
+              <button type="submit" class="btn-small">✓ {{ d.suggested_profile }}</button>
+            </form>
+            <form method="post" action="{{ url_for('zfs_dataset_apply_profile') }}"
+                  style="display:inline"
+                  onsubmit="return confirm('Aplicar perfil {{ 'vm_db' if d.suggested_profile == 'vms' else 'vms' }} em {{ d.name }}?');">
+              <input type="hidden" name="name" value="{{ d.name }}">
+              <input type="hidden" name="profile" value="{{ 'vm_db' if d.suggested_profile == 'vms' else 'vms' }}">
+              <button type="submit" class="btn-small secondary">{{ 'vm_db' if d.suggested_profile == 'vms' else 'vms' }}</button>
+            </form>
+            {% else %}
+              <span style="color:#3fb950">✓</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>⊕ Criar dataset otimizado</h3>
+  <p class="hint-inline">
+    Cria um dataset novo e já aplica todas as propriedades do perfil
+    escolhido. Equivalente a <code>zfs create &lt;name&gt;</code> +
+    múltiplos <code>zfs set</code>.
+  </p>
+  <form method="post" action="{{ url_for('zfs_dataset_create') }}" class="repl-form">
+    <div class="repl-form-row">
+      <label class="grow">
+        <span class="filter-label">Nome (formato pool/dataset)</span>
+        <input type="text" name="name" required
+               placeholder="nvme_pool/vms ou nvme_pool/vm_db">
+      </label>
+      <label>
+        <span class="filter-label">Perfil</span>
+        <select name="profile">
+          <option value="vms">vms (recordsize=16K, primarycache=all)</option>
+          <option value="vm_db">vm_db (recordsize=8K, primarycache=metadata)</option>
+        </select>
+      </label>
+      <button type="submit">Criar</button>
+    </div>
+  </form>
+  <details style="margin-top:10px">
+    <summary>Ver detalhes dos perfis</summary>
+    <div class="table-wrap" style="margin-top:8px">
+      <table>
+        <thead><tr><th>Propriedade</th><th>vms</th><th>vm_db</th></tr></thead>
+        <tbody>
+          {% for k in data.dataset_profile_vms.keys() %}
+          <tr>
+            <td class="mono">{{ k }}</td>
+            <td class="mono">{{ data.dataset_profile_vms[k] }}</td>
+            <td class="mono">{{ data.dataset_profile_vm_db[k] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</section>
+{% endif %}
+
 {# ---------- IO histórico por pool ---------- #}
 {% if data.pools %}
 {{ history_block(

@@ -5,8 +5,261 @@ from pathlib import Path
 ARCSTATS_PATH = Path("/proc/spl/kstat/zfs/arcstats")
 ARC_MAX_PATH = Path("/sys/module/zfs/parameters/zfs_arc_max")
 ARC_MIN_PATH = Path("/sys/module/zfs/parameters/zfs_arc_min")
+KERNEL_PARAM_DIR = Path("/sys/module/zfs/parameters")
 MODPROBE_CONF = Path("/etc/modprobe.d/zfs.conf")
 RAM_SAFETY_MAX_PCT = 0.90  # nunca passar de 90% da RAM total
+
+# Perfis de otimização (key -> (recommended_value, descrição curta))
+KERNEL_PROFILE_SSD = {
+    "zfs_txg_timeout": ("10",
+        "Frequência (s) que o ZFS faz flush de transactions. "
+        "Aumentar agrupa mais writes — bom para SSDs com queue depth alta."),
+    "zfs_dirty_data_max": (str(32 * 1024**3),
+        "Buffer máximo (bytes) de escritas em vôo antes de bloquear apps. "
+        "32 GiB ajuda em picos de write — escolha menor se total RAM < 64 GiB."),
+}
+
+POOL_PROFILE_SSD = {
+    "autotrim": ("on",
+        "TRIM contínuo automático. Mantém SSDs performando — sem isso, "
+        "performance degrada com o tempo conforme células ficam 'sujas'."),
+}
+
+POOL_PROFILE_NVME = dict(POOL_PROFILE_SSD)
+
+# Propriedades base aplicáveis a qualquer dataset que sirva storage de VM
+DATASET_PROFILE_BASE = {
+    "compression": ("lz4",
+        "Compressão rápida com ratio decente. Praticamente grátis em CPU moderna."),
+    "atime": ("off",
+        "Desativa atualização de access time — reduz writes desnecessários."),
+    "xattr": ("sa",
+        "Armazena atributos extras inline no dnode em vez de objetos "
+        "separados. Mais rápido e usa menos IOPS."),
+    "sync": ("standard",
+        "Honra fsync da aplicação — seguro. 'always' é forte demais "
+        "(degrada writes); 'disabled' é inseguro (perde dados em queda)."),
+}
+
+DATASET_PROFILE_VMS = {
+    **DATASET_PROFILE_BASE,
+    "recordsize": ("16K",
+        "Tamanho de bloco. 16K é bom para VMs (compromisso entre random IO "
+        "e throughput sequential)."),
+    "primarycache": ("all",
+        "ARC cacheia dados E metadados. Default ótimo para VMs."),
+}
+
+DATASET_PROFILE_VM_DB = {
+    **DATASET_PROFILE_BASE,
+    "recordsize": ("8K",
+        "Bancos relacionais (PostgreSQL/MySQL) usam blocos de 8K. "
+        "Match exato evita write amplification."),
+    "primarycache": ("metadata",
+        "Para DBs que já cacheiam internamente (shared_buffers), "
+        "cachear só metadata no ZFS evita duplo-cache."),
+}
+
+
+def kernel_param(key: str) -> str | None:
+    p = KERNEL_PARAM_DIR / key
+    if not p.exists():
+        return None
+    try:
+        return p.read_text().strip()
+    except OSError:
+        return None
+
+
+def kernel_params(keys: list[str] | None = None) -> dict:
+    if keys is None:
+        keys = list(KERNEL_PROFILE_SSD.keys())
+    return {k: kernel_param(k) for k in keys}
+
+
+def set_kernel_param(key: str, value: str, persist: bool = True) -> tuple[bool, str]:
+    """Aplica em /sys/module/zfs/parameters/<key> + persiste em modprobe.d."""
+    p = KERNEL_PARAM_DIR / key
+    if not p.exists():
+        return False, f"parâmetro {key} não existe (módulo zfs carregado?)"
+    try:
+        p.write_text(str(value))
+    except OSError as e:
+        return False, f"runtime falhou: {e}"
+    if persist:
+        ok, msg = _persist_module_options({key: str(value)})
+        if not ok:
+            return False, f"runtime OK, persistência falhou: {msg}"
+        return True, f"aplicado e persistido em {MODPROBE_CONF}"
+    return True, "aplicado em runtime (não persistido)"
+
+
+def _persist_module_options(updates: dict) -> tuple[bool, str]:
+    """Adiciona/substitui linhas 'options zfs <k>=<v>' em zfs.conf."""
+    new_lines = {}
+    for k, v in updates.items():
+        new_lines[k] = f"options zfs {k}={v}"
+    try:
+        existing = []
+        if MODPROBE_CONF.exists():
+            existing = MODPROBE_CONF.read_text().splitlines()
+        out_lines = []
+        handled = set()
+        for line in existing:
+            s = line.strip()
+            if not s or s.startswith("#"):
+                out_lines.append(line)
+                continue
+            if s.startswith("options zfs") and "=" in s:
+                # tenta detectar qual key tem
+                matched_key = None
+                for k in updates:
+                    if f"{k}=" in s:
+                        matched_key = k
+                        break
+                if matched_key:
+                    out_lines.append(new_lines[matched_key])
+                    handled.add(matched_key)
+                    continue
+            out_lines.append(line)
+        for k in updates:
+            if k not in handled:
+                out_lines.append(new_lines[k])
+        content = "\n".join(out_lines).rstrip() + "\n"
+        MODPROBE_CONF.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(MODPROBE_CONF) + ".cockpit.tmp"
+        with open(tmp, "w") as f:
+            f.write(content)
+        import os as _os
+        _os.chmod(tmp, 0o644)
+        _os.replace(tmp, str(MODPROBE_CONF))
+        return True, str(MODPROBE_CONF)
+    except OSError as e:
+        return False, str(e)
+
+
+def pool_properties(name: str, keys: list[str] | None = None) -> dict:
+    """zpool get -H -o property,value <props|all> <pool>"""
+    if keys is None:
+        keys = list(POOL_PROFILE_SSD.keys()) + ["ashift", "size", "capacity", "health"]
+    props_arg = ",".join(keys)
+    out = _run(["zpool", "get", "-H", "-o", "property,value", props_arg, name])
+    if not out:
+        return {}
+    result = {}
+    for line in out.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2:
+            result[parts[0]] = parts[1]
+    return result
+
+
+def set_pool_property(name: str, key: str, value: str) -> tuple[bool, str]:
+    try:
+        out = subprocess.check_output(
+            ["zpool", "set", f"{key}={value}", name],
+            stderr=subprocess.STDOUT, timeout=15,
+        )
+        return True, (out.decode(errors="replace").strip() or f"{key} = {value}")
+    except subprocess.CalledProcessError as e:
+        return False, e.output.decode(errors="replace").strip() or f"exit={e.returncode}"
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+
+
+def dataset_properties(name: str, keys: list[str] | None = None) -> dict:
+    """zfs get -H -o property,value <props> <dataset>"""
+    if keys is None:
+        keys = list(DATASET_PROFILE_VMS.keys()) + ["used", "available", "type"]
+    props_arg = ",".join(keys)
+    out = _run(["zfs", "get", "-H", "-o", "property,value", props_arg, name])
+    if not out:
+        return {}
+    result = {}
+    for line in out.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 2:
+            result[parts[0]] = parts[1]
+    return result
+
+
+def set_dataset_property(name: str, key: str, value: str) -> tuple[bool, str]:
+    try:
+        out = subprocess.check_output(
+            ["zfs", "set", f"{key}={value}", name],
+            stderr=subprocess.STDOUT, timeout=15,
+        )
+        return True, (out.decode(errors="replace").strip() or f"{key} = {value}")
+    except subprocess.CalledProcessError as e:
+        return False, e.output.decode(errors="replace").strip() or f"exit={e.returncode}"
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+
+
+def create_dataset(name: str, properties: dict | None = None) -> tuple[bool, str]:
+    """zfs create <name> + zfs set props"""
+    try:
+        subprocess.check_output(
+            ["zfs", "create", name],
+            stderr=subprocess.STDOUT, timeout=20,
+        )
+    except subprocess.CalledProcessError as e:
+        return False, f"create falhou: {e.output.decode(errors='replace').strip()}"
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    results = []
+    for k, v in (properties or {}).items():
+        ok, msg = set_dataset_property(name, k, v)
+        results.append(f"{k}={v}: {'ok' if ok else msg}")
+    return True, f"dataset {name} criado · " + " · ".join(results)
+
+
+def apply_profile_kernel_ssd() -> dict:
+    """Aplica perfil SSD nos params do módulo."""
+    results = {}
+    for key, (val, _desc) in KERNEL_PROFILE_SSD.items():
+        ok, msg = set_kernel_param(key, val)
+        results[key] = {"ok": ok, "msg": msg, "value": val}
+    return results
+
+
+def apply_profile_pool(name: str, profile_name: str = "ssd") -> dict:
+    profile = POOL_PROFILE_NVME if profile_name == "nvme" else POOL_PROFILE_SSD
+    results = {}
+    for key, (val, _) in profile.items():
+        ok, msg = set_pool_property(name, key, val)
+        results[key] = {"ok": ok, "msg": msg, "value": val}
+    return results
+
+
+def apply_profile_dataset(name: str, profile_name: str = "vms") -> dict:
+    profile = DATASET_PROFILE_VM_DB if profile_name == "vm_db" else DATASET_PROFILE_VMS
+    results = {}
+    for key, (val, _) in profile.items():
+        ok, msg = set_dataset_property(name, key, val)
+        results[key] = {"ok": ok, "msg": msg, "value": val}
+    return results
+
+
+def evaluate_dataset_profile(props: dict, profile_name: str = "vms") -> dict:
+    """Compara props atuais com perfil. Retorna lista de mismatches."""
+    profile = DATASET_PROFILE_VM_DB if profile_name == "vm_db" else DATASET_PROFILE_VMS
+    mismatches = []
+    for k, (expected, desc) in profile.items():
+        cur = props.get(k)
+        # 'recordsize' aparece como '16K' ou '16384' dependendo da versão
+        if cur and k == "recordsize":
+            cur_norm = cur.upper().rstrip("B")
+        else:
+            cur_norm = cur
+        if cur and cur_norm != expected:
+            mismatches.append({"key": k, "current": cur, "expected": expected, "desc": desc})
+    return {
+        "compliant": len(mismatches) == 0,
+        "mismatches": mismatches,
+        "ok_count": len(profile) - len(mismatches),
+        "total": len(profile),
+    }
 
 
 def available() -> dict:
@@ -442,19 +695,57 @@ def collect(interval: int = 1) -> dict:
     pool_list = pools()
     statuses = {p["name"]: pool_status(p["name"]) for p in pool_list}
     scrubs = {p["name"]: scrub_status(p["name"]) for p in pool_list}
+
+    # Enriquece cada pool com props (autotrim, ashift...) e compliance
+    for p in pool_list:
+        props = pool_properties(p["name"])
+        p["props"] = props
+        p["autotrim"] = props.get("autotrim", "off")
+        # Compliance simples: só checa autotrim
+        p["needs_tuning"] = (props.get("autotrim", "off") != "on")
+    # Datasets enriquecidos com props e compliance heuristica
+    ds_list = datasets()
+    for d in ds_list:
+        props = dataset_properties(d["name"])
+        d["props"] = props
+        # Heurística: se nome tem 'db', sugere perfil vm_db; senão vms
+        suggested = "vm_db" if "db" in d["name"].lower() else "vms"
+        d["suggested_profile"] = suggested
+        d["compliance"] = evaluate_dataset_profile(props, suggested)
+
+    # Kernel tuners atuais
+    kparams = kernel_params()
+    kernel_status = {}
+    for k, (rec, desc) in KERNEL_PROFILE_SSD.items():
+        cur = kparams.get(k)
+        # zfs_dirty_data_max é número grande — compara como int
+        try:
+            matches = (int(cur or 0) == int(rec))
+        except (TypeError, ValueError):
+            matches = (cur == rec)
+        kernel_status[k] = {
+            "current": cur,
+            "recommended": rec,
+            "desc": desc,
+            "matches": matches,
+        }
+
     return {
         "available": state,
         "interval": interval,
         "pools": pool_list,
         "statuses": statuses,
         "scrubs": scrubs,
-        "datasets": datasets(),
+        "datasets": ds_list,
         "arc": arc_stats(),
         "arc_tunable": arc_tunable_info(),
         "io": pool_io(interval),
         "vdev_io": vdev_io(interval),
         "latency": pool_latency(interval),
         "snapshots": snapshot_summary(),
+        "kernel_tuners": kernel_status,
+        "dataset_profile_vms": {k: v for k, (v, _) in DATASET_PROFILE_VMS.items()},
+        "dataset_profile_vm_db": {k: v for k, (v, _) in DATASET_PROFILE_VM_DB.items()},
     }
 
 

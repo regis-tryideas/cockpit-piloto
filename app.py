@@ -844,6 +844,108 @@ def view_proxmox():
     )
 
 
+@app.post("/zfs/apply-kernel-ssd")
+@login_required
+def zfs_apply_kernel_ssd():
+    results = zfs_col.apply_profile_kernel_ssd()
+    ok_n = sum(1 for r in results.values() if r["ok"])
+    total = len(results)
+    if ok_n == total:
+        flash(("ok", f"Perfil kernel SSD aplicado · {ok_n}/{total} parâmetros."))
+    else:
+        errs = [f"{k}: {r['msg']}" for k, r in results.items() if not r["ok"]]
+        flash(("error", f"Falhas: " + " · ".join(errs)))
+    return redirect(url_for("view_zfs"))
+
+
+@app.post("/zfs/kernel-set")
+@login_required
+def zfs_kernel_set():
+    key = (request.form.get("key") or "").strip()
+    value = (request.form.get("value") or "").strip()
+    if not key or not value:
+        flash(("error", "key e value obrigatórios"))
+        return redirect(url_for("view_zfs"))
+    ok, msg = zfs_col.set_kernel_param(key, value)
+    flash(("ok" if ok else "error", f"{key}: {msg}"))
+    return redirect(url_for("view_zfs"))
+
+
+@app.post("/zfs/pool/apply-profile")
+@login_required
+def zfs_pool_apply_profile():
+    name = (request.form.get("name") or "").strip()
+    profile = (request.form.get("profile") or "ssd").strip()
+    if not name:
+        flash(("error", "name obrigatório"))
+        return redirect(url_for("view_zfs"))
+    results = zfs_col.apply_profile_pool(name, profile)
+    ok_n = sum(1 for r in results.values() if r["ok"])
+    flash(("ok" if ok_n == len(results) else "error",
+           f"Perfil {profile} em {name}: {ok_n}/{len(results)} props OK"))
+    return redirect(url_for("view_zfs"))
+
+
+@app.post("/zfs/pool/set")
+@login_required
+def zfs_pool_set():
+    name = (request.form.get("name") or "").strip()
+    key = (request.form.get("key") or "").strip()
+    value = (request.form.get("value") or "").strip()
+    if not name or not key or not value:
+        flash(("error", "name, key e value obrigatórios"))
+        return redirect(url_for("view_zfs"))
+    ok, msg = zfs_col.set_pool_property(name, key, value)
+    flash(("ok" if ok else "error", f"zpool set {key}={value} em {name}: {msg}"))
+    return redirect(url_for("view_zfs"))
+
+
+@app.post("/zfs/dataset/apply-profile")
+@login_required
+def zfs_dataset_apply_profile():
+    name = (request.form.get("name") or "").strip()
+    profile = (request.form.get("profile") or "vms").strip()
+    if not name:
+        flash(("error", "name obrigatório"))
+        return redirect(url_for("view_zfs"))
+    results = zfs_col.apply_profile_dataset(name, profile)
+    ok_n = sum(1 for r in results.values() if r["ok"])
+    flash(("ok" if ok_n == len(results) else "error",
+           f"Perfil {profile} em {name}: {ok_n}/{len(results)} props OK"))
+    return redirect(url_for("view_zfs"))
+
+
+@app.post("/zfs/dataset/set")
+@login_required
+def zfs_dataset_set():
+    name = (request.form.get("name") or "").strip()
+    key = (request.form.get("key") or "").strip()
+    value = (request.form.get("value") or "").strip()
+    if not name or not key or not value:
+        flash(("error", "name, key e value obrigatórios"))
+        return redirect(url_for("view_zfs"))
+    ok, msg = zfs_col.set_dataset_property(name, key, value)
+    flash(("ok" if ok else "error", f"zfs set {key}={value} em {name}: {msg}"))
+    return redirect(url_for("view_zfs"))
+
+
+@app.post("/zfs/dataset/create")
+@login_required
+def zfs_dataset_create():
+    name = (request.form.get("name") or "").strip()
+    profile = (request.form.get("profile") or "vms").strip()
+    if not name or "/" not in name:
+        flash(("error", "Informe nome completo: pool/dataset"))
+        return redirect(url_for("view_zfs"))
+    if profile == "vm_db":
+        props = {k: v for k, (v, _) in zfs_col.DATASET_PROFILE_VM_DB.items()}
+    else:
+        props = {k: v for k, (v, _) in zfs_col.DATASET_PROFILE_VMS.items()}
+    ok, msg = zfs_col.create_dataset(name, props)
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_zfs"))
+
+
 @app.post("/zfs/arc-max")
 @login_required
 def set_arc_max():
