@@ -919,6 +919,45 @@ body.modal-open { overflow: hidden; }
   line-height: 1;
 }
 .zoom-reset:hover { background: var(--border-soft); color: var(--accent); }
+
+.custom-range {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.custom-range label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+}
+.custom-range input[type="datetime-local"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+}
+.custom-range button {
+  padding: 4px 10px;
+  background: var(--accent-strong);
+  color: #fff;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.custom-range button:hover { filter: brightness(1.1); }
 .chart-wrap { cursor: crosshair; }
 .chart-wrap {
   position: relative;

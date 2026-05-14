@@ -16,14 +16,14 @@
 
 <section class="panel">
   <h3>O que isto faz</h3>
-  <p style="color:#c9d1d9">
+  <p style="color:var(--text-2)">
     Quando habilitado, o cockpit faz <strong>dual-write</strong>: tudo que
     é gravado no SQLite local (72h de retenção) é também replicado para
     um PostgreSQL remoto, onde fica disponível pelo tempo que você definir
     (default: 30 dias). Cada tabela do PG ganha o prefixo do hostname para
     permitir que vários hosts apontem para o mesmo banco sem conflito.
   </p>
-  <ul style="color:#c9d1d9; font-size:13px; line-height:1.7">
+  <ul style="color:var(--text-2); font-size:13px; line-height:1.7">
     <li>Tabela local <code>metrics_cpu</code> → tabela remota
         <code>{{ data.cfg.table_prefix }}_metrics_cpu</code></li>
     <li>Falhas no PG <strong>não bloqueiam</strong> a gravação local.</li>
@@ -108,7 +108,7 @@
   </form>
 
   {% if data.cfg.last_test_at %}
-  <div style="margin-top:14px; padding:10px; background:#0d1117; border:1px solid #21262d; border-radius:6px; font-size:12px">
+  <div style="margin-top:14px; padding:10px; background:var(--surface-2); border:1px solid var(--border-soft); border-radius:6px; font-size:12px">
     <div><strong>Último teste:</strong>
       {{ data.cfg.last_test_at | format_ts }} ·
       {% if data.cfg.last_test_ok %}<span class="badge ok">OK</span>

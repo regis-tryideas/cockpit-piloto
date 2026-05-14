@@ -28,7 +28,7 @@
 {# ---------- Banner educativo ---------- #}
 <section class="panel iscsi-intro">
   <h3>⓵ O que é NVMe-oF</h3>
-  <p style="color:#c9d1d9">
+  <p style="color:var(--text-2)">
     NVMe over Fabrics é o sucessor do iSCSI para storage de bloco em rede.
     Usa o mesmo protocolo NVMe (que liga SSDs ao PCIe localmente), mas via
     rede. <strong>Vantagens vs iSCSI:</strong> latência muito menor (~10 µs
@@ -88,7 +88,7 @@
 {% if data.host_nqn %}
 <section class="panel">
   <h3>HostNQN deste initiator</h3>
-  <div class="mono" style="background:#0d1117; padding:8px 12px; border-radius:6px; border:1px solid #21262d; font-size:12px; word-break:break-all">
+  <div class="mono" style="background:var(--surface-2); padding:8px 12px; border-radius:6px; border:1px solid var(--border-soft); font-size:12px; word-break:break-all">
     {{ data.host_nqn }}
   </div>
   <p class="hint-inline">

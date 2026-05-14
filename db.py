@@ -279,6 +279,57 @@ def purge_non_physical_disks():
             )
 
 
+def fetch_history_range(table: str, from_ts: int, to_ts: int) -> list[dict]:
+    """Lê histórico entre [from_ts, to_ts]. Usa PG se habilitado."""
+    if table not in HISTORY_TABLES:
+        raise ValueError(f"tabela inválida: {table}")
+    try:
+        cfg = pg_get_config()
+        if cfg.get("enabled") and cfg.get("host"):
+            rows = pg_fetch_history_range(table, from_ts, to_ts)
+            if rows is not None:
+                return rows
+    except Exception:
+        pass
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM {table} WHERE ts >= ? AND ts <= ? ORDER BY ts ASC",
+            (from_ts, to_ts),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def pg_fetch_history_range(table: str, from_ts: int, to_ts: int) -> list[dict] | None:
+    cfg = pg_get_config()
+    if not (cfg.get("enabled") and cfg.get("host")):
+        return None
+    if table not in _PG_TABLE_DEFS:
+        return None
+    try:
+        conn, _ = _pg_connect()
+    except Exception:
+        return None
+    rows = []
+    try:
+        full = pg_full_table_name(cfg, table)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM {full} WHERE ts BETWEEN %s AND %s ORDER BY ts ASC",
+                (from_ts, to_ts),
+            )
+            cols = [d[0] for d in cur.description]
+            for r in cur.fetchall():
+                rows.append(dict(zip(cols, r)))
+        return rows
+    except Exception:
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def fetch_history(table: str, window_seconds: int,
                   group_col: str | None = None) -> list[dict]:
     if table not in HISTORY_TABLES:

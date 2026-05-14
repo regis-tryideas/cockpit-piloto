@@ -19,10 +19,23 @@
         <button data-window="6h">6h</button>
         <button data-window="24h">24h</button>
         <button data-window="72h">72h</button>
+        {% if pg_enabled %}
+        <button data-window="7d">7d</button>
+        <button data-window="30d">30d</button>
+        <button data-window="custom">📅</button>
+        {% endif %}
       </div>
       <button class="zoom-reset" data-target="{{ slot_id }}"
               title="Reset zoom (clique e arraste no gráfico para selecionar período)">↺</button>
     </div>
+    {% if pg_enabled %}
+    <div class="custom-range" data-target="{{ slot_id }}" hidden>
+      <label>de: <input type="datetime-local" data-role="from"></label>
+      <label>até: <input type="datetime-local" data-role="to"></label>
+      <button type="button" data-role="apply">Aplicar</button>
+      <small style="color:var(--text-muted)">retenção PG configurada</small>
+    </div>
+    {% endif %}
   </div>
   <div class="chart-wrap">
     <canvas id="{{ slot_id }}"></canvas>
@@ -97,8 +110,13 @@
       }
 
       async function load(window){
-        const r = await fetch(`/api/history/${cfg.resource}?window=${window}`,
-                              { credentials: "same-origin" });
+        let url;
+        if (typeof window === 'object' && window.from) {
+          url = `/api/history/${cfg.resource}?from=${window.from}&to=${window.to}`;
+        } else {
+          url = `/api/history/${cfg.resource}?window=${window}`;
+        }
+        const r = await fetch(url, { credentials: "same-origin" });
         if (!r.ok) return;
         const data = await r.json();
         const rows = data.rows || [];
@@ -216,13 +234,33 @@
 
       // Bind window picker
       const picker = document.querySelector(`.window-picker[data-target="${id}"]`);
+      const customRange = document.querySelector(`.custom-range[data-target="${id}"]`);
       picker.addEventListener("click", e => {
         if (e.target.tagName !== "BUTTON") return;
         picker.querySelectorAll("button").forEach(b => b.classList.remove("active"));
         e.target.classList.add("active");
-        currentWindow = e.target.dataset.window;
+        const w = e.target.dataset.window;
+        if (w === "custom") {
+          if (customRange) customRange.hidden = false;
+          return;  // espera o Aplicar do form
+        }
+        if (customRange) customRange.hidden = true;
+        currentWindow = w;
         load(currentWindow);
       });
+      if (customRange) {
+        const applyBtn = customRange.querySelector('[data-role=apply]');
+        applyBtn.addEventListener('click', () => {
+          const fromInput = customRange.querySelector('[data-role=from]').value;
+          const toInput   = customRange.querySelector('[data-role=to]').value;
+          if (!fromInput || !toInput) return alert('Informe ambas as datas.');
+          const fromTs = Math.floor(new Date(fromInput).getTime() / 1000);
+          const toTs   = Math.floor(new Date(toInput).getTime() / 1000);
+          if (fromTs >= toTs) return alert('"de" deve ser anterior a "até".');
+          currentWindow = { from: fromTs, to: toTs };
+          load(currentWindow);
+        });
+      }
 
       // Reset zoom (botão ↺)
       const resetBtn = document.querySelector(`.zoom-reset[data-target="${id}"]`);

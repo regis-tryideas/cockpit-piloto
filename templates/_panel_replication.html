@@ -73,7 +73,7 @@
     Para habilitar replicação <strong>incremental real</strong> (só delta entre snapshots,
     como <code>zfs send -i</code>), instale <code>thin-send-recv</code> da LINBIT em
     ambos os hosts:
-    <pre class="mono" style="margin: 8px 0; padding: 8px; background: #0d1117; border-radius: 4px;">git clone https://github.com/LINBIT/thin-send-recv
+    <pre class="mono" style="margin: 8px 0; padding: 8px; background: var(--surface-2); border-radius: 4px;">git clone https://github.com/LINBIT/thin-send-recv
 cd thin-send-recv && make &amp;&amp; sudo make install</pre>
     Após instalar, rode "test" no job e o cockpit detecta automaticamente.
   </div>

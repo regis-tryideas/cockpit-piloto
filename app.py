@@ -118,9 +118,16 @@ def load_session():
 
 @app.context_processor
 def inject_globals():
+    pg_enabled = False
+    try:
+        cfg = db.pg_get_config()
+        pg_enabled = bool(cfg.get("enabled") and cfg.get("host"))
+    except Exception:
+        pass
     return {
         "pve_detected": PVE_DETECTED,
         "version_info": version.info(),
+        "pg_enabled": pg_enabled,
     }
 
 
@@ -1338,6 +1345,10 @@ WINDOW_PRESETS = {
     "6h":  6 * 3600,
     "24h": 24 * 3600,
     "72h": 72 * 3600,
+    "7d":  7 * 86400,
+    "30d": 30 * 86400,
+    "90d": 90 * 86400,
+    "365d": 365 * 86400,
 }
 
 
@@ -1347,9 +1358,20 @@ def api_history(resource):
     table = VALID_HISTORY_RESOURCES.get(resource)
     if not table:
         abort(404)
-    window = request.args.get("window", "6h")
-    seconds = WINDOW_PRESETS.get(window, 6 * 3600)
-    rows = db.fetch_history(table, seconds)
+    # Modo 1: range customizado via ?from=ts&to=ts (somente unix timestamps)
+    from_arg = request.args.get("from")
+    to_arg = request.args.get("to")
+    if from_arg and to_arg:
+        try:
+            rows = db.fetch_history_range(table, int(from_arg), int(to_arg))
+        except (ValueError, TypeError):
+            return jsonify({"error": "from/to inválidos"}), 400
+        window = "custom"
+    else:
+        # Modo 2: janela preset
+        window = request.args.get("window", "6h")
+        seconds = WINDOW_PRESETS.get(window, 6 * 3600)
+        rows = db.fetch_history(table, seconds)
     if resource == "disk":
         for r in rows:
             ri = r.get("r_iops") or 0
