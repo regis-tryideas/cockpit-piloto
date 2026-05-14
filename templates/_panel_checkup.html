@@ -1,0 +1,132 @@
+{% extends "dashboard.html" %}
+{% from "_history.html" import explainer %}
+{% block panel %}
+
+<nav class="breadcrumb">
+  <a href="{{ url_for('view_system') }}">← Sistema</a>
+  <span>·</span>
+  <span>Checkup</span>
+</nav>
+
+<section class="summary-cards">
+  <div class="card">
+    <div class="card-label">Críticos</div>
+    <div class="card-value {% if data.summary.critical %}warn-text{% endif %}">
+      {{ data.summary.critical }}
+    </div>
+    <div class="card-foot">requerem ação imediata</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Avisos</div>
+    <div class="card-value">{{ data.summary.warn }}</div>
+    <div class="card-foot">tuning recomendado</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Informações</div>
+    <div class="card-value">{{ data.summary.info }}</div>
+    <div class="card-foot">sugestões e contexto</div>
+  </div>
+  <div class="card">
+    <div class="card-label">OK</div>
+    <div class="card-value">{{ data.summary.ok }}</div>
+    <div class="card-foot">já em conformidade</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Total checado</div>
+    <div class="card-value">{{ data.items|length }}</div>
+    <div class="card-foot mono">gerado em {{ data.generated_at | format_ts }}</div>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>Filtros</h3>
+  <div class="checkup-filters">
+    <label class="chip"><input type="checkbox" data-sev="critical" checked> críticos</label>
+    <label class="chip"><input type="checkbox" data-sev="warn" checked> avisos</label>
+    <label class="chip"><input type="checkbox" data-sev="info" checked> info</label>
+    <label class="chip"><input type="checkbox" data-sev="ok"> OK</label>
+    <span style="margin-left:16px; color:#6e7681; font-size:11px">|</span>
+    {% for cat in data.categories %}
+    <label class="chip"><input type="checkbox" data-cat="{{ cat }}" checked> {{ cat }} ({{ data.category_counts[cat] }})</label>
+    {% endfor %}
+    <a href="{{ url_for('view_checkup') }}" class="btn-small secondary" style="margin-left:auto">↻ recarregar</a>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>Resultados <small>(<span id="checkup-visible">{{ data.items|length }}</span> visíveis)</small></h3>
+  <div class="table-wrap">
+    <table id="checkup-table">
+      <thead>
+        <tr>
+          <th>Severidade</th>
+          <th>Categoria</th>
+          <th>Item</th>
+          <th>Atual</th>
+          <th>Esperado</th>
+          <th>Detalhe</th>
+          <th>Ação</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in data.items %}
+        <tr class="checkup-row" data-sev="{{ it.status }}" data-cat="{{ it.category }}">
+          <td>
+            {% if it.status == 'critical' %}<span class="badge critical-bg">crit</span>
+            {% elif it.status == 'warn' %}<span class="badge warn-bg">warn</span>
+            {% elif it.status == 'ok' %}<span class="badge ok">ok</span>
+            {% else %}<span class="badge">info</span>{% endif %}
+          </td>
+          <td><small class="mono">{{ it.category }}</small></td>
+          <td>{{ it.title }}</td>
+          <td class="mono">{{ it.current or '—' }}</td>
+          <td class="mono">{{ it.expected or '—' }}</td>
+          <td style="white-space:normal; font-size:12px">{{ it.why or '' }}</td>
+          <td>
+            {% if it.fix_link %}
+            <a href="{{ it.fix_link }}" class="btn-small">{{ it.fix_label or 'Abrir' }}</a>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(function(){
+  const table = document.getElementById('checkup-table');
+  const counter = document.getElementById('checkup-visible');
+  const filters = document.querySelectorAll('.checkup-filters input[type=checkbox]');
+  function apply(){
+    const sevs = new Set([...document.querySelectorAll('.checkup-filters [data-sev]:checked')].map(c => c.dataset.sev));
+    const cats = new Set([...document.querySelectorAll('.checkup-filters [data-cat]:checked')].map(c => c.dataset.cat));
+    let n = 0;
+    table.querySelectorAll('tbody tr.checkup-row').forEach(tr => {
+      const ok = sevs.has(tr.dataset.sev) && cats.has(tr.dataset.cat);
+      tr.style.display = ok ? '' : 'none';
+      if (ok) n++;
+    });
+    counter.textContent = n;
+  }
+  filters.forEach(f => f.addEventListener('change', apply));
+  apply();
+})();
+</script>
+
+{{ explainer('Como interpretar o checkup', [
+  ('Severidades',
+   '<span class="badge critical-bg">crit</span> requer ação imediata (falha iminente, host pode travar). '
+   '<span class="badge warn-bg">warn</span> tuning fortemente recomendado (performance ou estabilidade). '
+   '<span class="badge">info</span> sugestão de melhoria ou contexto. '
+   '<span class="badge ok">ok</span> em conformidade — escondido por default para reduzir ruído.'),
+  ('Categorias',
+   'Cada item aponta para a aba específica onde aplicar o fix. Os grupos são: Hardware (SMART/filesystems), Kernel/Sysctl, ZFS (ARC, pools, datasets), iSCSI, Processos (D-state), Banco PostgreSQL, Replicação, Cockpit (updates).'),
+  ('Recoletar',
+   'O checkup é recomputado a cada page load (~3s). Para forçar re-execução completa de todos os coletores, use ↻ recarregar.'),
+  ('Fix em lote',
+   'Esta tela só sinaliza — para aplicar correções use os botões em cada aba referenciada (Sistema → tuning, ZFS → otimização, iSCSI → perfil PVE, etc.).'),
+]) }}
+
+{% endblock %}

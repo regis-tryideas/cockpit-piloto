@@ -739,6 +739,20 @@ def system_update_apply():
     return redirect(url_for("view_system") + "#update")
 
 
+@app.get("/system/checkup")
+@login_required
+def view_checkup():
+    from collectors import checkup as checkup_col
+    data = checkup_col.collect()
+    return render_template(
+        "_panel_checkup.html",
+        tab="system",
+        heading="Checkup do sistema",
+        username=g.session["username"],
+        data=data,
+    )
+
+
 @app.get("/system/pg")
 @login_required
 def view_pg():

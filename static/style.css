@@ -1214,6 +1214,15 @@ details.mount-details summary::-webkit-details-marker { display: none; }
   color: #8b949e;
 }
 
+/* Checkup filters */
+.checkup-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.checkup-filters .chip { cursor: pointer; }
+
 tr.runs-row td { background: #0d1117; padding: 6px 14px; }
 .sub-table { font-size: 11px; margin-top: 6px; }
 .sub-table td { padding: 4px 8px; }
