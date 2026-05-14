@@ -16,6 +16,12 @@
     <span class="brand-version" title="{{ version_info.sha or '' }}{% if version_info.branch %} · {{ version_info.branch }}{% endif %}{% if version_info.dirty %} · dirty{% endif %}">
       {{ version_info.label }}
     </span>
+    {% if version_info.updates_available %}
+    <a href="{{ url_for('view_system') }}#update" class="brand-update"
+       title="{{ version_info.commits_behind }} commit(s) novos disponíveis">
+      ⬇ update
+    </a>
+    {% endif %}
   </div>
   <nav class="tabs">
     <a class="{% if tab=='dashboard' %}active{% endif %}" href="{{ url_for('view_dashboard') }}">Dashboard</a>

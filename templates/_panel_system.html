@@ -3,6 +3,43 @@
 {% block panel %}
 
 {# ---------- Atalhos ---------- #}
+<section class="panel" id="update">
+  <h3>Atualização do Cockpit
+    <small>· instalado em <code>{{ version_info.label }}</code></small>
+  </h3>
+  {% if version_info.commits_behind is not none %}
+    {% if version_info.commits_behind > 0 %}
+    <div class="flash flash-info" style="margin-bottom:10px">
+      <strong>{{ version_info.commits_behind }} commit(s)</strong> novos
+      disponíveis em <code>origin/{{ version_info.branch }}</code>.
+      Última checagem: <span class="mono">{{ version_info.updates_checked_at | format_ts }}</span>.
+    </div>
+    {% else %}
+    <div class="flash flash-ok" style="margin-bottom:10px">
+      Cockpit está em dia com <code>origin/{{ version_info.branch }}</code>.
+      Última checagem: <span class="mono">{{ version_info.updates_checked_at | format_ts }}</span>.
+    </div>
+    {% endif %}
+  {% endif %}
+
+  <form method="post" action="{{ url_for('system_update_check') }}" style="display:inline">
+    <button type="submit" class="btn-small">⇄ Verificar atualizações</button>
+  </form>
+  <form method="post" action="{{ url_for('system_update_apply') }}" style="display:inline"
+        onsubmit="return confirm('Aplicar git pull --ff-only e reiniciar cockpit-piloto.service?\n\nA conexão atual será fechada por alguns segundos.');">
+    <button type="submit" class="btn-small"
+            {% if not version_info.updates_available %}{% endif %}>
+      ⬇ Atualizar e reiniciar
+    </button>
+  </form>
+  <p class="hint-inline" style="margin-top:10px">
+    Equivalente a: <code>git pull --ff-only origin {{ version_info.branch or 'main' }}</code>
+    + <code>systemctl restart cockpit-piloto</code>.
+    Verificações são cacheadas por 5 min; clique "Verificar" para forçar
+    <code>git fetch</code>.
+  </p>
+</section>
+
 <section class="panel">
   <h3>Configuração do sistema</h3>
   <a class="btn-small" href="{{ url_for('view_hosts_editor') }}">

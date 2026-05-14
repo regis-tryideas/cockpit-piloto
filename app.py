@@ -705,6 +705,40 @@ def _list_hosts_backups():
     return out
 
 
+@app.post("/system/update/check")
+@login_required
+def system_update_check():
+    result = version.check_updates(force=True)
+    if not result.get("ok"):
+        flash(("error", result.get("error", "erro desconhecido")))
+    elif result.get("commits_behind", 0) == 0:
+        flash(("ok", "Cockpit está atualizado · nenhum commit pendente."))
+    else:
+        flash(("info", f"{result['commits_behind']} commit(s) novo(s) "
+                       "disponível(is). Use 'Atualizar e reiniciar' para aplicar."))
+    return redirect(url_for("view_system") + "#update")
+
+
+@app.post("/system/update/apply")
+@login_required
+def system_update_apply():
+    ok, msg = version.apply_update()
+    if not ok:
+        flash(("error", f"git pull falhou: {msg[:300]}"))
+        return redirect(url_for("view_system") + "#update")
+    # Pull OK — agendar restart do serviço
+    rs_ok, rs_msg = version.restart_service()
+    if rs_ok:
+        flash(("ok",
+               f"Atualização aplicada · {rs_msg}. Aguarde alguns segundos e recarregue."))
+    else:
+        flash(("info",
+               f"Atualização aplicada ({msg.splitlines()[0] if msg else ''}). "
+               f"Restart automático não disponível: {rs_msg}. "
+               "Reinicie manualmente."))
+    return redirect(url_for("view_system") + "#update")
+
+
 @app.get("/system/pg")
 @login_required
 def view_pg():

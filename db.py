@@ -284,6 +284,17 @@ def fetch_history(table: str, window_seconds: int,
     if table not in HISTORY_TABLES:
         raise ValueError(f"tabela inválida: {table}")
     cutoff = int(time.time()) - window_seconds
+
+    # Se PG remoto está habilitado, lê de lá (é onde os dados estão)
+    try:
+        cfg = pg_get_config()
+        if cfg.get("enabled") and cfg.get("host"):
+            rows = pg_fetch_history(table, cutoff)
+            if rows is not None:
+                return rows
+    except Exception:
+        pass  # fallback para SQLite
+
     with connect() as conn:
         rows = conn.execute(
             f"SELECT * FROM {table} WHERE ts >= ? ORDER BY ts ASC",
@@ -292,20 +303,66 @@ def fetch_history(table: str, window_seconds: int,
     return [dict(r) for r in rows]
 
 
+def pg_fetch_history(table: str, cutoff_ts: int) -> list[dict] | None:
+    """SELECT * FROM <prefix>_<table> WHERE ts >= cutoff ORDER BY ts ASC."""
+    cfg = pg_get_config()
+    if not (cfg.get("enabled") and cfg.get("host")):
+        return None
+    if table not in _PG_TABLE_DEFS:
+        return None
+    try:
+        conn, _ = _pg_connect()
+    except Exception:
+        return None
+    rows = []
+    try:
+        full = pg_full_table_name(cfg, table)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT * FROM {full} WHERE ts >= %s ORDER BY ts ASC",
+                (cutoff_ts,),
+            )
+            cols = [d[0] for d in cur.description]
+            for r in cur.fetchall():
+                rows.append(dict(zip(cols, r)))
+        return rows
+    except Exception:
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def insert_many(table: str, rows: list[dict]):
+    """Grava rows na tabela.
+
+    - Para tabelas de histórico (metrics_*): se PG remoto está habilitado,
+      grava APENAS no PG (SQLite local é pulado para evitar duplicação).
+      Caso contrário, grava no SQLite local.
+    - Para outras tabelas (sessions, login_attempts, replication_*, pg_config,
+      etc.): sempre no SQLite local — são estado interno do cockpit.
+    """
     if not rows:
         return
+    is_metric = table.startswith("metrics_")
+    pg_active = False
+    if is_metric:
+        try:
+            cfg = pg_get_config()
+            pg_active = bool(cfg.get("enabled") and cfg.get("host"))
+        except Exception:
+            pg_active = False
+        if pg_active:
+            pg_insert_many(table, rows)
+            return  # NÃO grava no SQLite quando PG está ativo
+
     cols = list(rows[0].keys())
     placeholders = ",".join(["?"] * len(cols))
     sql = f"INSERT OR REPLACE INTO {table} ({','.join(cols)}) VALUES ({placeholders})"
     with connect() as conn:
         conn.executemany(sql, [tuple(r[c] for c in cols) for r in rows])
-    # Dual-write opcional pro Postgres remoto (best-effort, não bloqueia o
-    # local nem propaga erro pra cima)
-    try:
-        pg_insert_many(table, rows)
-    except Exception:
-        pass
 
 
 # =========================================================================
