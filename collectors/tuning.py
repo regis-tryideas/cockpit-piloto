@@ -4,6 +4,52 @@ Cada recomendação tem severity: 'critical' / 'warn' / 'info' / 'ok'.
 """
 from pathlib import Path
 
+PVE_NODES_DIR = Path("/etc/pve/nodes")
+
+
+def _pve_pinning_signals() -> dict:
+    """Procura VMs PVE com pinning explícito ou NUMA topology configurada.
+
+    Sinais:
+    - linha 'affinity: <list>' — CPU affinity explícita (sempre intencional)
+    - linha 'numa: 1' — habilita NUMA topology na VM (Proxmox mapeia memória
+      para nodes específicos do host)
+    """
+    info = {"vms_with_affinity": 0, "vms_with_numa": 0, "total_pinned": 0}
+    if not PVE_NODES_DIR.exists():
+        return info
+    try:
+        for node_dir in PVE_NODES_DIR.iterdir():
+            qemu_dir = node_dir / "qemu-server"
+            if not qemu_dir.exists():
+                continue
+            for conf in qemu_dir.glob("*.conf"):
+                try:
+                    text = conf.read_text()
+                except OSError:
+                    continue
+                has_affinity = False
+                has_numa = False
+                for line in text.splitlines():
+                    s = line.strip()
+                    if not s or s.startswith("#"):
+                        continue
+                    if s.startswith("[") and s.endswith("]"):
+                        break  # entrou em seção [snapshot]
+                    if s.startswith("affinity:"):
+                        has_affinity = True
+                    elif s.startswith("numa:") and "1" in s.split(":", 1)[1]:
+                        has_numa = True
+                if has_affinity:
+                    info["vms_with_affinity"] += 1
+                if has_numa:
+                    info["vms_with_numa"] += 1
+                if has_affinity or has_numa:
+                    info["total_pinned"] += 1
+    except OSError:
+        pass
+    return info
+
 
 def _read_sysctl(key: str) -> str | None:
     path = Path("/proc/sys") / key.replace(".", "/")
@@ -158,15 +204,31 @@ def collect(total_ram_b: int = 0, cores: int = 0,
             add("transparent_hugepage", thp, "madvise", "ok",
                 "Configuração ótima pra PVE.")
 
-    # ---- NUMA balancing ----
+    # ---- NUMA balancing — só recomenda se houver pinning explícito ----
+    # numa_balancing=1 (default) é BENÉFICO para workloads genéricos
+    # (kernel migra páginas pra ficar perto do CPU que está usando).
+    # Só prejudica quando VMs já fazem o trabalho via CPU pinning —
+    # nesse caso numa_balancing fica disputando alocações com o hypervisor.
     if numa_nodes >= 2:
         nb = _int(_read_sysctl("kernel.numa_balancing"))
-        if nb is not None and nb == 1:
+        pinning = _pve_pinning_signals()
+        has_pinning = (pinning["total_pinned"] > 0)
+        if nb is not None and nb == 1 and has_pinning:
             add("kernel.numa_balancing", nb, 0, "info",
-                "Em hosts multi-socket, numa_balancing migra páginas entre "
-                "nodes — útil em workloads genéricos, ruim quando VMs têm "
-                "afinidade NUMA explícita (CPU pinning). Se você usa pinning, "
-                "desabilite.")
+                f"Detectei {pinning['total_pinned']} VM(s) com pinning "
+                f"explícito ({pinning['vms_with_affinity']} affinity, "
+                f"{pinning['vms_with_numa']} numa=1). Como o pinning já "
+                "fixa CPU/memória nos nodes certos, <code>numa_balancing</code> "
+                "fica brigando — pode causar latency spikes. Desabilitar "
+                "(<code>= 0</code>) é vantajoso aqui.")
+        elif nb is not None and nb == 1:
+            # Sem pinning: numa_balancing=1 é a escolha correta.
+            add("kernel.numa_balancing", nb, 1, "ok",
+                "Host multi-socket mas nenhuma VM com pinning explícito. "
+                "<code>numa_balancing=1</code> (padrão) é o ideal nesse "
+                "cenário — o kernel migra páginas dinamicamente. <strong>"
+                "Não desabilite</strong> a menos que ative pinning em "
+                "VMs sensíveis primeiro.")
 
     # ---- ZFS arc_max ----
     if has_zfs:
