@@ -314,44 +314,88 @@
 
 {% if data.pools %}
 <section class="panel">
-  <h3>⚙ Otimização por pool</h3>
+  <h3>⚙ Otimização por pool <small>(perfil aplica zpool set + zfs set no root)</small></h3>
   <p class="hint-inline">
-    Aplica <code>autotrim=on</code> (e outras props futuras) em pools SSD/NVMe.
-    Equivalente a <code>zpool set autotrim=on &lt;pool&gt;</code>.
+    O cockpit detecta automaticamente o tipo de disco do pool (NVMe / SSD /
+    rotational) lendo <code>/sys/block/&lt;dev&gt;/queue/rotational</code>
+    e sugere o perfil mais adequado. <strong>SSD</strong>: aplica
+    <code>autotrim=on</code> + <code>compression=lz4</code>, <code>atime=off</code>
+    no root. <strong>NVMe</strong>: mesmo + <code>xattr=sa</code>,
+    <code>sync=standard</code>.
   </p>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr><th>Pool</th><th>autotrim</th><th>ashift</th><th>%cap</th><th>Aplicar</th></tr>
-      </thead>
-      <tbody>
-        {% for p in data.pools %}
-        <tr class="{% if p.needs_tuning %}tuning-warn{% else %}tuning-ok{% endif %}">
-          <td><strong class="mono">{{ p.name }}</strong></td>
-          <td class="mono">{{ p.autotrim }}</td>
-          <td class="mono">{{ p.props.ashift if p.props else '—' }}</td>
-          <td>{{ p.capacity }}</td>
-          <td>
-            <form method="post" action="{{ url_for('zfs_pool_apply_profile') }}"
-                  style="display:inline"
-                  onsubmit="return confirm('Aplicar perfil SSD em {{ p.name }}? Liga autotrim.');">
-              <input type="hidden" name="name" value="{{ p.name }}">
-              <input type="hidden" name="profile" value="ssd">
-              <button type="submit" class="btn-small">SSD</button>
-            </form>
-            <form method="post" action="{{ url_for('zfs_pool_apply_profile') }}"
-                  style="display:inline"
-                  onsubmit="return confirm('Aplicar perfil NVMe em {{ p.name }}?');">
-              <input type="hidden" name="name" value="{{ p.name }}">
-              <input type="hidden" name="profile" value="nvme">
-              <button type="submit" class="btn-small">NVMe</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  {% for p in data.pools %}
+  <div class="iscsi-node">
+    <div class="iscsi-node-head">
+      <div>
+        <strong class="mono">{{ p.name }}</strong>
+        <small>· {{ p.capacity }} usado</small>
+        {% set k = p.disk_kinds %}
+        {% if k.nvme %}<span class="badge transport">NVMe ×{{ k.nvme }}</span>{% endif %}
+        {% if k.ssd %}<span class="badge">SSD ×{{ k.ssd }}</span>{% endif %}
+        {% if k.rotational %}<span class="badge warn-bg">HDD ×{{ k.rotational }}</span>{% endif %}
+        {% if p.suggested_profile %}
+          <span class="badge ok">perfil sugerido: {{ p.suggested_profile }}</span>
+        {% endif %}
+        {% if p.needs_tuning %}
+          <span class="badge warn-bg">{{ p.profile_mismatches|length }} divergente(s)</span>
+        {% else %}
+          <span class="badge ok">em conformidade</span>
+        {% endif %}
+      </div>
+      <div>
+        {% if p.suggested_profile %}
+        <form method="post" action="{{ url_for('zfs_pool_apply_profile') }}"
+              style="display:inline"
+              onsubmit="return confirm('Aplicar perfil {{ p.suggested_profile|upper }} em {{ p.name }}? Equivale a múltiplos zpool set + zfs set no root.');">
+          <input type="hidden" name="name" value="{{ p.name }}">
+          <input type="hidden" name="profile" value="{{ p.suggested_profile }}">
+          <button type="submit" class="btn-small">✓ Aplicar perfil {{ p.suggested_profile|upper }} (sugerido)</button>
+        </form>
+        {% endif %}
+        {% if p.suggested_profile != 'ssd' %}
+        <form method="post" action="{{ url_for('zfs_pool_apply_profile') }}"
+              style="display:inline"
+              onsubmit="return confirm('Forçar perfil SSD em {{ p.name }}?');">
+          <input type="hidden" name="name" value="{{ p.name }}">
+          <input type="hidden" name="profile" value="ssd">
+          <button type="submit" class="btn-small secondary">SSD</button>
+        </form>
+        {% endif %}
+        {% if p.suggested_profile != 'nvme' %}
+        <form method="post" action="{{ url_for('zfs_pool_apply_profile') }}"
+              style="display:inline"
+              onsubmit="return confirm('Forçar perfil NVMe em {{ p.name }}?');">
+          <input type="hidden" name="name" value="{{ p.name }}">
+          <input type="hidden" name="profile" value="nvme">
+          <button type="submit" class="btn-small secondary">NVMe</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if p.profile_mismatches %}
+    <details open style="margin-top:8px">
+      <summary>{{ p.profile_mismatches|length }} divergência(s) do perfil {{ p.suggested_profile }}</summary>
+      <div class="table-wrap" style="margin-top:8px">
+        <table class="sub-table">
+          <thead><tr><th>Layer</th><th>Propriedade</th><th>Atual</th><th>Esperado</th><th>Por quê</th></tr></thead>
+          <tbody>
+            {% for m in p.profile_mismatches %}
+            <tr class="tuning-warn">
+              <td><code>{{ m.layer }}</code></td>
+              <td class="mono">{{ m.key }}</td>
+              <td class="mono">{{ m.current or '—' }}</td>
+              <td class="mono">{{ m.expected }}</td>
+              <td><small>{{ m.desc }}</small></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
   </div>
+  {% endfor %}
 </section>
 {% endif %}
 

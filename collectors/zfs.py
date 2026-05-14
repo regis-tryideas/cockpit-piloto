@@ -27,6 +27,28 @@ POOL_PROFILE_SSD = {
 
 POOL_PROFILE_NVME = dict(POOL_PROFILE_SSD)
 
+# Propriedades aplicadas no DATASET ROOT do pool (zfs set <prop> <pool>).
+# Herdam para todos os filhos a menos que sobrescritos. Esse é o "perfil
+# do storage" — diferente do POOL_PROFILE que mexe em config do pool.
+POOL_ROOT_DS_PROFILE_SSD = {
+    "compression": ("lz4",
+        "Compressão rápida. Ganho de espaço sem custo de CPU notável."),
+    "atime":       ("off",
+        "Sem update de access time → menos writes triviais."),
+}
+
+POOL_ROOT_DS_PROFILE_NVME = {
+    "compression": ("lz4",
+        "Compressão rápida. Em NVMe, a CPU é o limite — lz4 ainda compensa."),
+    "atime":       ("off",
+        "Sem update de access time."),
+    "xattr":       ("sa",
+        "Atributos extras inline no dnode. Reduz IOPS metadata."),
+    "sync":        ("standard",
+        "Honra fsync. NVMe é rápido o bastante para 'sync=always' não ser "
+        "necessário; 'disabled' é inseguro."),
+}
+
 # Propriedades base aplicáveis a qualquer dataset que sirva storage de VM
 DATASET_PROFILE_BASE = {
     "compression": ("lz4",
@@ -224,12 +246,78 @@ def apply_profile_kernel_ssd() -> dict:
 
 
 def apply_profile_pool(name: str, profile_name: str = "ssd") -> dict:
-    profile = POOL_PROFILE_NVME if profile_name == "nvme" else POOL_PROFILE_SSD
+    """Aplica perfil completo:
+       1) zpool set <props> (autotrim, etc) — POOL_PROFILE_*
+       2) zfs set <props>  no root do pool — POOL_ROOT_DS_PROFILE_*
+       Para NVMe inclui xattr=sa e sync=standard, que o seu padrão usa.
+    """
+    if profile_name == "nvme":
+        pool_props = POOL_PROFILE_NVME
+        ds_props = POOL_ROOT_DS_PROFILE_NVME
+    else:
+        pool_props = POOL_PROFILE_SSD
+        ds_props = POOL_ROOT_DS_PROFILE_SSD
+
     results = {}
-    for key, (val, _) in profile.items():
+    for key, (val, _) in pool_props.items():
         ok, msg = set_pool_property(name, key, val)
-        results[key] = {"ok": ok, "msg": msg, "value": val}
+        results[f"zpool:{key}"] = {"ok": ok, "msg": msg, "value": val}
+    for key, (val, _) in ds_props.items():
+        ok, msg = set_dataset_property(name, key, val)
+        results[f"zfs:{key}"] = {"ok": ok, "msg": msg, "value": val}
     return results
+
+
+def pool_disk_kinds(name: str) -> dict:
+    """Examina os vdevs do pool e classifica os discos físicos.
+
+    Retorna {'nvme': N, 'ssd': N, 'rotational': N, 'unknown': N,
+             'suggested': 'nvme'|'ssd'|'rotational'|'mixed'}
+    """
+    kinds = {"nvme": 0, "ssd": 0, "rotational": 0, "unknown": 0}
+    out = _run(["zpool", "list", "-v", "-H", "-P", name], timeout=8)
+    if not out:
+        return {**kinds, "suggested": None}
+    for line in out.splitlines():
+        # Linhas com '/dev/...' são devices físicos do vdev
+        parts = line.split()
+        if not parts:
+            continue
+        token = parts[0]
+        # Filtra: ignora header do pool e nomes lógicos (mirror-N, raidz-N)
+        if not token.startswith("/dev/"):
+            continue
+        dev_name = token.replace("/dev/", "").split("/")[-1]
+        # Resolve partições (sdX1 → sdX, nvme0n1p1 → nvme0n1)
+        if dev_name.startswith("nvme") and "p" in dev_name:
+            dev_name = dev_name.rsplit("p", 1)[0]
+        elif dev_name and dev_name[-1].isdigit() and not dev_name.startswith("nvme"):
+            # sda1 → sda  (mas mantém nvme0n1)
+            dev_name = dev_name.rstrip("0123456789")
+        # Classifica
+        if dev_name.startswith("nvme"):
+            kinds["nvme"] += 1
+        else:
+            rot_path = Path(f"/sys/block/{dev_name}/queue/rotational")
+            try:
+                rot = rot_path.read_text().strip() if rot_path.exists() else None
+            except OSError:
+                rot = None
+            if rot == "0":
+                kinds["ssd"] += 1
+            elif rot == "1":
+                kinds["rotational"] += 1
+            else:
+                kinds["unknown"] += 1
+
+    nonzero = {k: v for k, v in kinds.items() if v > 0 and k != "unknown"}
+    if not nonzero:
+        suggested = None
+    elif len(nonzero) == 1:
+        suggested = next(iter(nonzero))
+    else:
+        suggested = "mixed"
+    return {**kinds, "suggested": suggested}
 
 
 def apply_profile_dataset(name: str, profile_name: str = "vms") -> dict:
@@ -696,13 +784,44 @@ def collect(interval: int = 1) -> dict:
     statuses = {p["name"]: pool_status(p["name"]) for p in pool_list}
     scrubs = {p["name"]: scrub_status(p["name"]) for p in pool_list}
 
-    # Enriquece cada pool com props (autotrim, ashift...) e compliance
+    # Enriquece cada pool com props, tipo de discos e compliance completa
     for p in pool_list:
-        props = pool_properties(p["name"])
-        p["props"] = props
-        p["autotrim"] = props.get("autotrim", "off")
-        # Compliance simples: só checa autotrim
-        p["needs_tuning"] = (props.get("autotrim", "off") != "on")
+        pool_props = pool_properties(p["name"])
+        ds_props = dataset_properties(p["name"])
+        p["props"] = pool_props
+        p["root_ds_props"] = ds_props
+        p["autotrim"] = pool_props.get("autotrim", "off")
+        p["disk_kinds"] = pool_disk_kinds(p["name"])
+
+        # Determina perfil sugerido baseado nos discos
+        suggested = p["disk_kinds"].get("suggested")
+        if suggested == "nvme":
+            profile_label = "nvme"
+            pool_profile = POOL_PROFILE_NVME
+            ds_profile = POOL_ROOT_DS_PROFILE_NVME
+        elif suggested in ("ssd", "mixed"):
+            profile_label = "ssd"
+            pool_profile = POOL_PROFILE_SSD
+            ds_profile = POOL_ROOT_DS_PROFILE_SSD
+        else:
+            profile_label = None
+            pool_profile = ds_profile = {}
+
+        # Compliance check
+        mismatches = []
+        for k, (rec, desc) in pool_profile.items():
+            cur = pool_props.get(k)
+            if cur != rec:
+                mismatches.append({"layer": "zpool", "key": k,
+                                   "current": cur, "expected": rec, "desc": desc})
+        for k, (rec, desc) in ds_profile.items():
+            cur = ds_props.get(k)
+            if cur and cur != rec:
+                mismatches.append({"layer": "zfs", "key": k,
+                                   "current": cur, "expected": rec, "desc": desc})
+        p["suggested_profile"] = profile_label
+        p["profile_mismatches"] = mismatches
+        p["needs_tuning"] = len(mismatches) > 0
     # Datasets enriquecidos com props e compliance heuristica
     ds_list = datasets()
     for d in ds_list:
