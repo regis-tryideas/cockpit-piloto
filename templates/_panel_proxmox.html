@@ -106,7 +106,9 @@
           <th>Disk read</th><th>Disk write</th>
           <th>Net in</th><th>Net out</th>
           <th data-tip="Quantidade de snapshots ativos. Excesso em VMs com muita escrita degrada performance (CoW).">Snaps</th>
+          <th data-tip="Jobs do PVE Storage Replication (pvesr) — replica via zfs send para outro node do cluster.">Replicação</th>
           <th>Uptime</th>
+          <th>Ações</th>
         </tr>
       </thead>
       <tbody>
@@ -142,7 +144,27 @@
           <td class="{% if v.snapshot_count and v.snapshot_count > 5 %}warn-text{% endif %}">
             {{ v.snapshot_count if v.snapshot_count is not none else '—' }}
           </td>
+          <td>
+            {% if v.replications %}
+              {% for r in v.replications %}
+                <span class="badge ok"
+                      data-tip="job {{ r.id }} · {{ r.schedule or 'manual' }}{% if r.rate %} · rate {{ r.rate }} MB/s{% endif %}{% if r.disable %} · DISABLED{% endif %}">
+                  ⇄ {{ r.target }}
+                </span>
+              {% endfor %}
+            {% else %}—{% endif %}
+          </td>
           <td>{{ (v.uptime_s/86400)|round(1) }} d</td>
+          <td>
+            {% if v.status == 'running' %}
+            <button type="button" class="btn-small migrate-btn"
+                    data-vmid="{{ v.vmid }}" data-vmtype="{{ v.type }}"
+                    data-vmname="{{ v.name }}"
+                    onclick="event.stopPropagation(); openMigrateDialog(this)">
+              ↗ migrate
+            </button>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -242,6 +264,76 @@
   {% endif %}
   {% endfor %}
 </section>
+
+{# ---------- Mini-dialog de migração ---------- #}
+<div id="migrate-dialog" class="modal-overlay" hidden>
+  <form class="modal-body" method="post"
+        action="" id="migrate-form" style="max-width:480px"
+        onsubmit="return confirm('Iniciar migração de VM ' + this.dataset.vmid + ' para ' + this.target.value + '?\n\nProcesso pode levar minutos. Acompanhe pelo modal de detalhes da VM (tasks).');">
+    <header class="modal-head">
+      <h3>Migrar VM <span id="migrate-vm-label" class="mono"></span></h3>
+      <button type="button" class="modal-close" onclick="closeMigrateDialog()">×</button>
+    </header>
+    <div class="modal-content">
+      <p class="hint-inline" style="margin-top:0">
+        Equivalente a <code>qm migrate &lt;vmid&gt; &lt;target&gt; --online 1</code>.
+        VM continua respondendo durante a transferência (online migration).
+      </p>
+      <input type="hidden" name="type" id="migrate-type">
+      <label style="display:block; margin-bottom:14px">
+        <span class="filter-label">Node de destino</span>
+        <select name="target" id="migrate-target" required style="width:100%; padding:6px 10px">
+          <option value="">— carregando nodes —</option>
+        </select>
+      </label>
+      <label class="inline-check">
+        <input type="checkbox" name="online" value="1" checked> online (live migration)
+      </label>
+      <div style="margin-top:14px; display:flex; gap:8px">
+        <button type="submit" class="btn-small">▶ Iniciar migração</button>
+        <button type="button" class="btn-small secondary" onclick="closeMigrateDialog()">Cancelar</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+(function(){
+  const dlg  = document.getElementById('migrate-dialog');
+  const form = document.getElementById('migrate-form');
+  const sel  = document.getElementById('migrate-target');
+  const lbl  = document.getElementById('migrate-vm-label');
+  const typeInput = document.getElementById('migrate-type');
+  let currentNode = null;
+
+  window.openMigrateDialog = async function(btn){
+    const vmid   = btn.dataset.vmid;
+    const vmtype = btn.dataset.vmtype;
+    const vmname = btn.dataset.vmname || '';
+    form.action = `/proxmox/vm/${vmid}/migrate`;
+    form.dataset.vmid = vmid;
+    typeInput.value = vmtype;
+    lbl.textContent = `${vmid} · ${vmname} (${vmtype})`;
+    sel.innerHTML = '<option value="">— carregando —</option>';
+    dlg.removeAttribute('hidden');
+    try {
+      const r = await fetch('/api/proxmox/nodes', { credentials: 'same-origin' });
+      const d = await r.json();
+      sel.innerHTML = '<option value="">— selecione —</option>';
+      (d.nodes || []).forEach(n => {
+        if (n.status !== 'online') return;
+        const opt = document.createElement('option');
+        opt.value = n.name; opt.textContent = `${n.name} (${n.status})`;
+        sel.appendChild(opt);
+      });
+    } catch(e) {
+      sel.innerHTML = `<option value="">erro: ${e}</option>`;
+    }
+  };
+  window.closeMigrateDialog = function(){ dlg.setAttribute('hidden', ''); };
+  dlg.addEventListener('click', e => { if (e.target === dlg) closeMigrateDialog(); });
+})();
+</script>
 
 {# ---------- Modal de detalhes da VM ---------- #}
 <div id="vm-modal" class="modal-overlay" hidden>

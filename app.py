@@ -1411,6 +1411,27 @@ def api_proxmox_vm_snapshots(vmid):
     return jsonify({"vmid": vmid, "snapshots": snaps})
 
 
+@app.post("/proxmox/vm/<int:vmid>/migrate")
+@login_required
+def proxmox_migrate_vm(vmid):
+    vm_type = (request.form.get("type") or "qemu").strip()
+    target = (request.form.get("target") or "").strip()
+    online = bool(request.form.get("online"))
+    if not target:
+        flash(("error", "Node de destino obrigatório."))
+        return redirect(url_for("view_proxmox"))
+    ok, msg = pve_col.migrate_vm(vmid, vm_type, target, online=online)
+    flash(("ok" if ok else "error",
+           f"Migrate VM {vmid} → {target}: {msg[:300]}"))
+    return redirect(url_for("view_proxmox"))
+
+
+@app.get("/api/proxmox/replication/jobs")
+@login_required
+def api_proxmox_replication_jobs():
+    return jsonify({"jobs": pve_col.replication_jobs()})
+
+
 @app.errorhandler(404)
 def not_found(_):
     return ("Página não encontrada", 404)

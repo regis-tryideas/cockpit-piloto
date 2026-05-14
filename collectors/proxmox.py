@@ -286,6 +286,17 @@ def collect() -> dict:
         except Exception:
             v["snapshot_count"] = None
 
+    # Indexa jobs de replicação PVE por vmid pra anexar a cada VM
+    rep_jobs = replication_jobs()
+    rep_by_vmid: dict[int, list] = {}
+    for j in rep_jobs:
+        gid = j.get("guest")
+        if gid is None:
+            continue
+        rep_by_vmid.setdefault(int(gid), []).append(j)
+    for v in enriched:
+        v["replications"] = rep_by_vmid.get(v["vmid"], [])
+
     enriched.sort(key=lambda x: (x["status"] != "running", -x["cpu_pct"]))
 
     impact = {
@@ -350,6 +361,80 @@ def vm_snapshot_count_fast(vmid: int, vm_type: str, node: str | None = None) -> 
             if name and name != "current":
                 count += 1
     return count
+
+
+def replication_jobs() -> list[dict]:
+    """pvesh get /cluster/replication — jobs do PVE Storage Replication."""
+    data = _run_json([
+        "pvesh", "get", "/cluster/replication", "--output-format=json",
+    ], timeout=10)
+    if not data:
+        return []
+    rows = []
+    for r in data:
+        rows.append({
+            "id":         r.get("id"),
+            "guest":      r.get("guest"),
+            "target":     r.get("target"),
+            "type":       r.get("type"),
+            "schedule":   r.get("schedule"),
+            "rate":       r.get("rate"),
+            "comment":    r.get("comment"),
+            "disable":    bool(r.get("disable", 0)),
+            "source":     r.get("source"),
+        })
+    return rows
+
+
+def replication_status_for(vmid: int, node: str | None = None) -> list[dict]:
+    """Status detalhado da replicação de uma VM (último run, próximo, erro)."""
+    if not node:
+        node = detect().get("node")
+    if not node:
+        return []
+    data = _run_json([
+        "pvesh", "get", f"/nodes/{node}/replication",
+        f"--guest={vmid}", "--output-format=json",
+    ], timeout=10)
+    if not data:
+        return []
+    return data
+
+
+def migrate_vm(vmid: int, vm_type: str, target_node: str,
+               online: bool = True) -> tuple[bool, str]:
+    """Inicia 'qm migrate' ou 'pct migrate' em background.
+
+    Migração pode levar minutos/horas — não bloqueamos o request. Retornamos
+    assim que o UPID for criado; user acompanha em /proxmox (tasks da VM).
+    """
+    state = detect()
+    if not state["ok"] or not state["node"]:
+        return False, "PVE não detectado"
+    if target_node == state["node"]:
+        return False, f"destino é o próprio node ({target_node})"
+
+    kind = "qemu" if vm_type == "qemu" else "lxc"
+    # Usa o API path em vez do binário qm/pct pra capturar UPID
+    cmd = [
+        "pvesh", "create",
+        f"/nodes/{state['node']}/{kind}/{vmid}/migrate",
+        "--target", target_node,
+    ]
+    if online and vm_type == "qemu":
+        cmd += ["--online", "1"]
+    elif vm_type == "lxc":
+        # LXC pode usar 'restart=1' (offline restart) ou 'online=1' (live)
+        cmd += ["--online", "1" if online else "0"]
+    try:
+        out = subprocess.check_output(
+            cmd, stderr=subprocess.STDOUT, timeout=30,
+        ).decode(errors="replace").strip()
+        return True, out or f"migração iniciada para {target_node}"
+    except subprocess.CalledProcessError as e:
+        return False, e.output.decode(errors="replace").strip()[:300]
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
 
 
 def vm_snapshots(vmid: int, vm_type: str) -> list[dict]:
