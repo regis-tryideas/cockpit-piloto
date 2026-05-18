@@ -120,7 +120,7 @@
       </label>
       <button type="submit" class="btn-small">Aplicar config + restart</button>
     </form>
-    {% elif svc.key == 'zabbix-agent' %}
+    {% elif svc.key == 'zabbix-agent2' %}
     <h4>Configuração rápida</h4>
     <form method="post" action="{{ url_for('services_apply_config', svc_key=svc.key) }}"
           class="svc-config-form"

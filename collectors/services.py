@@ -1,4 +1,4 @@
-"""Gerenciamento de serviços do sistema (snmpd, zabbix-agent etc).
+"""Gerenciamento de serviços do sistema (snmpd, zabbix-agent2 etc).
 
 Lifecycle systemd + edição de config com backup + rollback. Tudo via
 argv (sem shell), backup automático antes de qualquer escrita, validação
@@ -21,12 +21,12 @@ SERVICES: dict[str, dict] = {
         "config_path": "/etc/snmp/snmpd.conf",
         "binary": "/usr/sbin/snmpd",
     },
-    "zabbix-agent": {
-        "label": "Zabbix agent",
-        "unit": "zabbix-agent.service",
-        "packages": ["zabbix-agent"],
-        "config_path": "/etc/zabbix/zabbix_agentd.conf",
-        "binary": "/usr/sbin/zabbix_agentd",
+    "zabbix-agent2": {
+        "label": "Zabbix agent 2",
+        "unit": "zabbix-agent2.service",
+        "packages": ["zabbix-agent2"],
+        "config_path": "/etc/zabbix/zabbix_agent2.conf",
+        "binary": "/usr/sbin/zabbix_agent2",
     },
 }
 
@@ -335,14 +335,14 @@ ZABBIX_DEFAULTS = {
     "ServerActive": "127.0.0.1",
     "Hostname": "",
     "ListenPort": "10050",
-    "LogFile": "/var/log/zabbix/zabbix_agentd.log",
+    "LogFile": "/var/log/zabbix/zabbix_agent2.log",
 }
 
 _ZABBIX_KEYS = list(ZABBIX_DEFAULTS.keys())
 
 
 def zabbix_read_form() -> dict:
-    raw = read_text(SERVICES["zabbix-agent"]["config_path"])
+    raw = read_text(SERVICES["zabbix-agent2"]["config_path"])
     form = dict(ZABBIX_DEFAULTS)
     for line in raw.splitlines():
         s = line.strip()
@@ -358,12 +358,12 @@ def zabbix_read_form() -> dict:
 
 
 def zabbix_apply_form(form: dict) -> str:
-    """Edita o zabbix_agentd.conf preservando comentários e linhas extras."""
-    raw = read_text(SERVICES["zabbix-agent"]["config_path"])
+    """Edita o zabbix_agent2.conf preservando comentários e linhas extras."""
+    raw = read_text(SERVICES["zabbix-agent2"]["config_path"])
     if not raw:
         lines = [
             "# Gerado por cockpit-piloto",
-            "PidFile=/run/zabbix/zabbix_agentd.pid",
+            "PidFile=/run/zabbix/zabbix_agent2.pid",
             f"LogFile={form.get('LogFile', ZABBIX_DEFAULTS['LogFile'])}",
             f"Server={_sanitize_oneliner(form.get('Server') or '')}",
             f"ServerActive={_sanitize_oneliner(form.get('ServerActive') or '')}",
@@ -445,7 +445,7 @@ def collect_service(svc_key: str) -> dict:
     raw = read_text(svc["config_path"]) if installed else ""
     if svc_key == "snmpd":
         form = snmpd_read_form() if installed else dict(SNMPD_DEFAULTS)
-    elif svc_key == "zabbix-agent":
+    elif svc_key == "zabbix-agent2":
         form = zabbix_read_form() if installed else dict(ZABBIX_DEFAULTS)
     else:
         form = {}

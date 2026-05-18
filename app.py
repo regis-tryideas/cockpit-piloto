@@ -950,7 +950,7 @@ def view_numa():
     )
 
 
-# === Serviços (snmpd, zabbix-agent, ...) ============================
+# === Serviços (snmpd, zabbix-agent2, ...) ===========================
 
 def _services_redirect():
     return redirect(url_for("view_system") + "#services")
@@ -994,7 +994,7 @@ def services_apply_config(svc_key):
     form = {k: v for k, v in request.form.items() if k != "action"}
     if svc_key == "snmpd":
         content = services_col.snmpd_render_form(form)
-    elif svc_key == "zabbix-agent":
+    elif svc_key == "zabbix-agent2":
         content = services_col.zabbix_apply_form(form)
     else:
         flash(("error", f"sem template de config para {svc_key}"))
