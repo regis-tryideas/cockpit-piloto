@@ -28,6 +28,7 @@ from collectors import network as net_col
 from collectors import numa as numa_col
 from collectors import pressure as psi_col
 from collectors import proxmox as pve_col
+from collectors import services as services_col
 from collectors import smart as smart_col
 from collectors import system as system_col
 from collectors import tuning as tuning_col
@@ -283,6 +284,8 @@ def view_system():
         total_ram_b=total_ram_b, cores=cores, pve_vms=pve_vms,
         has_zfs=zfs_avail, numa_nodes=numa_nodes,
     )
+
+    data["services"] = services_col.collect()
 
     return render_template(
         "_panel_system.html",
@@ -945,6 +948,91 @@ def view_numa():
         username=g.session["username"],
         data=data,
     )
+
+
+# === Serviços (snmpd, zabbix-agent, ...) ============================
+
+def _services_redirect():
+    return redirect(url_for("view_system") + "#services")
+
+
+def _svc_key_or_400(svc_key: str) -> str | None:
+    if svc_key not in services_col.SERVICES:
+        flash(("error", f"serviço desconhecido: {svc_key}"))
+        return None
+    return svc_key
+
+
+@app.post("/services/<svc_key>/action")
+@login_required
+def services_action(svc_key):
+    if not _svc_key_or_400(svc_key):
+        return _services_redirect()
+    action = (request.form.get("action") or "").strip()
+    unit = services_col.SERVICES[svc_key]["unit"]
+    ok, msg = services_col.unit_action(unit, action)
+    flash(("ok" if ok else "error", f"{action} {unit}: {msg}"))
+    return _services_redirect()
+
+
+@app.post("/services/<svc_key>/install")
+@login_required
+def services_install(svc_key):
+    if not _svc_key_or_400(svc_key):
+        return _services_redirect()
+    pkgs = services_col.SERVICES[svc_key]["packages"]
+    ok, msg = services_col.apt_install(pkgs)
+    flash(("ok" if ok else "error", msg))
+    return _services_redirect()
+
+
+@app.post("/services/<svc_key>/apply-config")
+@login_required
+def services_apply_config(svc_key):
+    if not _svc_key_or_400(svc_key):
+        return _services_redirect()
+    form = {k: v for k, v in request.form.items() if k != "action"}
+    if svc_key == "snmpd":
+        content = services_col.snmpd_render_form(form)
+    elif svc_key == "zabbix-agent":
+        content = services_col.zabbix_apply_form(form)
+    else:
+        flash(("error", f"sem template de config para {svc_key}"))
+        return _services_redirect()
+    ok, msg = services_col.apply_and_restart(svc_key, content)
+    flash(("ok" if ok else "error", msg))
+    return _services_redirect()
+
+
+@app.post("/services/<svc_key>/apply-config-raw")
+@login_required
+def services_apply_config_raw(svc_key):
+    if not _svc_key_or_400(svc_key):
+        return _services_redirect()
+    content = request.form.get("raw") or ""
+    if not content.strip():
+        flash(("error", "conteúdo vazio"))
+        return _services_redirect()
+    if not content.endswith("\n"):
+        content += "\n"
+    ok, msg = services_col.apply_and_restart(svc_key, content)
+    flash(("ok" if ok else "error", msg))
+    return _services_redirect()
+
+
+@app.post("/services/<svc_key>/rollback")
+@login_required
+def services_rollback(svc_key):
+    if not _svc_key_or_400(svc_key):
+        return _services_redirect()
+    backup_name = (request.form.get("backup_name") or "").strip()
+    cfg = services_col.SERVICES[svc_key]["config_path"]
+    ok, msg = services_col.rollback_backup(cfg, backup_name)
+    if ok:
+        unit = services_col.SERVICES[svc_key]["unit"]
+        services_col.unit_action(unit, "restart")
+    flash(("ok" if ok else "error", msg))
+    return _services_redirect()
 
 
 @app.get("/proxmox")

@@ -1,0 +1,206 @@
+{# Bloco "Serviços" — incluído em _panel_system.html. Espera data.services. #}
+<section class="panel" id="services">
+  <h3>Serviços <small>gerenciamento via systemd + edição de config</small></h3>
+
+  {% if not data.services.systemctl_available %}
+  <div class="alert">systemctl não disponível neste host. Não dá pra gerenciar serviços por aqui.</div>
+  {% else %}
+
+  {% for svc in data.services.services %}
+  <details class="svc-card" {% if not svc.installed or (svc.status and svc.status.active != 'active') %}open{% endif %}>
+    <summary>
+      <strong>{{ svc.label }}</strong>
+      <small class="mono">{{ svc.unit }}</small>
+      {% if not svc.installed %}
+        <span class="badge warn-bg">não instalado</span>
+      {% else %}
+        {% if svc.status.active == 'active' %}
+          <span class="badge ok">active</span>
+        {% elif svc.status.active == 'inactive' %}
+          <span class="badge">inactive</span>
+        {% elif svc.status.active == 'failed' %}
+          <span class="badge warn-bg">failed</span>
+        {% else %}
+          <span class="badge">{{ svc.status.active or '—' }}</span>
+        {% endif %}
+        {% if svc.status.enabled == 'enabled' %}
+          <span class="badge ok">enabled</span>
+        {% elif svc.status.enabled == 'disabled' %}
+          <span class="badge">disabled</span>
+        {% else %}
+          <span class="badge">{{ svc.status.enabled or '?' }}</span>
+        {% endif %}
+        {% if svc.status.n_restarts and svc.status.n_restarts > 0 %}
+          <span class="badge warn-bg" data-tip="reinicializações desde o boot">↻ {{ svc.status.n_restarts }}</span>
+        {% endif %}
+      {% endif %}
+    </summary>
+
+    {% if not svc.installed %}
+    {# ---------- Não instalado: ofereço install ---------- #}
+    <p class="hint-inline">
+      Pacote(s) <code>{{ svc.unit.replace('.service','') }}</code> não detectado(s).
+      Posso instalar via <code>apt-get install</code>.
+    </p>
+    <form method="post" action="{{ url_for('services_install', svc_key=svc.key) }}">
+      <button type="submit" class="btn-small">Instalar</button>
+    </form>
+    {% else %}
+
+    {# ---------- Status detalhado ---------- #}
+    <div class="svc-status">
+      <div><span class="kv-label">PID</span> <span class="mono">{{ svc.status.main_pid or '—' }}</span></div>
+      <div><span class="kv-label">Memória</span>
+        {% if svc.status.memory_b %}{{ svc.status.memory_b | format_bytes }}{% else %}—{% endif %}
+      </div>
+      <div><span class="kv-label">Ativo desde</span>
+        <span class="mono">{{ svc.status.active_since or '—' }}</span>
+      </div>
+      <div><span class="kv-label">Sub-state</span>
+        <span class="mono">{{ svc.status.sub_state or '—' }}</span>
+      </div>
+      <div><span class="kv-label">Unit file</span>
+        <span class="mono">{{ svc.status.fragment_path or '—' }}</span>
+      </div>
+      <div><span class="kv-label">Config</span>
+        <span class="mono">{{ svc.config_path }}</span>
+      </div>
+    </div>
+
+    {# ---------- Ações de lifecycle ---------- #}
+    <div class="svc-actions">
+      {% for act, label, cls in [
+        ('start', 'Start', ''),
+        ('stop', 'Stop', 'danger'),
+        ('restart', 'Restart', ''),
+        ('reload', 'Reload', ''),
+        ('enable', 'Enable boot', ''),
+        ('disable', 'Disable boot', 'danger'),
+      ] %}
+      <form method="post" action="{{ url_for('services_action', svc_key=svc.key) }}"
+            style="display:inline"
+            {% if act in ('stop', 'disable') %}
+            onsubmit="return confirm('Confirmar {{ act }} {{ svc.unit }}?');"
+            {% endif %}>
+        <input type="hidden" name="action" value="{{ act }}">
+        <button type="submit" class="btn-small {{ cls }}">{{ label }}</button>
+      </form>
+      {% endfor %}
+    </div>
+
+    {# ---------- Form de configuração ---------- #}
+    {% if svc.key == 'snmpd' %}
+    <h4>Configuração rápida</h4>
+    <form method="post" action="{{ url_for('services_apply_config', svc_key=svc.key) }}"
+          class="svc-config-form"
+          onsubmit="return confirm('Aplicar nova config + reiniciar {{ svc.unit }}?\n\nBackup automático será criado. Se o restart falhar, rollback é aplicado.');">
+      <label>
+        <span class="filter-label">Community (read-only)</span>
+        <input type="text" name="community" value="{{ svc.form.community }}" required>
+      </label>
+      <label>
+        <span class="filter-label">Restringir ao IP do coletor <small>(vazio = qualquer)</small></span>
+        <input type="text" name="restrict_ip" value="{{ svc.form.restrict_ip }}" placeholder="192.168.2.230">
+      </label>
+      <label>
+        <span class="filter-label">agentAddress</span>
+        <input type="text" name="agentAddress" value="{{ svc.form.agentAddress }}" placeholder="udp:161">
+      </label>
+      <label>
+        <span class="filter-label">sysLocation</span>
+        <input type="text" name="sysLocation" value="{{ svc.form.sysLocation }}">
+      </label>
+      <label>
+        <span class="filter-label">sysContact</span>
+        <input type="text" name="sysContact" value="{{ svc.form.sysContact }}">
+      </label>
+      <label>
+        <span class="filter-label">sysServices</span>
+        <input type="text" name="sysServices" value="{{ svc.form.sysServices }}" placeholder="72">
+      </label>
+      <button type="submit" class="btn-small">Aplicar config + restart</button>
+    </form>
+    {% elif svc.key == 'zabbix-agent' %}
+    <h4>Configuração rápida</h4>
+    <form method="post" action="{{ url_for('services_apply_config', svc_key=svc.key) }}"
+          class="svc-config-form"
+          onsubmit="return confirm('Aplicar nova config + reiniciar {{ svc.unit }}?');">
+      <label>
+        <span class="filter-label">Server <small>(passivo)</small></span>
+        <input type="text" name="Server" value="{{ svc.form.Server }}" required>
+      </label>
+      <label>
+        <span class="filter-label">ServerActive <small>(ativo / push)</small></span>
+        <input type="text" name="ServerActive" value="{{ svc.form.ServerActive }}">
+      </label>
+      <label>
+        <span class="filter-label">Hostname</span>
+        <input type="text" name="Hostname" value="{{ svc.form.Hostname }}" required>
+      </label>
+      <label>
+        <span class="filter-label">ListenPort</span>
+        <input type="text" name="ListenPort" value="{{ svc.form.ListenPort }}">
+      </label>
+      <label>
+        <span class="filter-label">LogFile</span>
+        <input type="text" name="LogFile" value="{{ svc.form.LogFile }}">
+      </label>
+      <button type="submit" class="btn-small">Aplicar config + restart</button>
+    </form>
+    {% endif %}
+
+    {# ---------- Edição avançada (raw) ---------- #}
+    <details class="svc-raw">
+      <summary>Edição avançada do <span class="mono">{{ svc.config_path }}</span></summary>
+      <form method="post" action="{{ url_for('services_apply_config_raw', svc_key=svc.key) }}"
+            onsubmit="return confirm('Salvar conteúdo raw + reiniciar {{ svc.unit }}?\n\nSe não subir, rollback automático.');">
+        <textarea name="raw" rows="20" spellcheck="false"
+                  style="width:100%;font-family:var(--font-mono);font-size:12px">{{ svc.raw }}</textarea>
+        <button type="submit" class="btn-small">Salvar raw + restart</button>
+      </form>
+    </details>
+
+    {# ---------- Backups / rollback ---------- #}
+    {% if svc.backups %}
+    <details class="svc-backups">
+      <summary>Backups de config ({{ svc.backups|length }})</summary>
+      <table class="sub-table">
+        <thead>
+          <tr><th>Backup</th><th>Quando</th><th>Tamanho</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for b in svc.backups %}
+          <tr>
+            <td class="mono">{{ b.name }}</td>
+            <td class="mono">{{ b.ts | format_ts }}</td>
+            <td>{{ b.size | format_bytes }}</td>
+            <td>
+              <form method="post" action="{{ url_for('services_rollback', svc_key=svc.key) }}"
+                    style="display:inline"
+                    onsubmit="return confirm('Restaurar {{ b.name }} e reiniciar {{ svc.unit }}?\n\nConfig atual vira backup novo.');">
+                <input type="hidden" name="backup_name" value="{{ b.name }}">
+                <button type="submit" class="btn-small">restaurar</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endif %}
+
+    {# ---------- Journal recente ---------- #}
+    {% if svc.journal %}
+    <details class="svc-journal">
+      <summary>Journal recente ({{ svc.journal|length }} linhas, última 1h)</summary>
+      <pre class="mono svc-journal-pre">{% for entry in svc.journal %}{{ entry.line }}
+{% endfor %}</pre>
+    </details>
+    {% endif %}
+
+    {% endif %}{# /installed #}
+  </details>
+  {% endfor %}
+
+  {% endif %}{# /systemctl_available #}
+</section>

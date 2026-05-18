@@ -487,6 +487,8 @@
 ]) }}
 {% endif %}
 
+{% include "_panel_services.html" %}
+
 {{ explainer('Como ler estas métricas', [
   ('R · running',   'Processos prontos ou rodando no scheduler. Quando &gt; nº de cores em janelas longas, indica saturação de CPU.'),
   ('S · sleeping',  'Aguardando algum evento (timer, IO interruptível, signal). É o estado da maioria dos processos saudáveis.'),

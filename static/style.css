@@ -1409,3 +1409,68 @@ tr.runs-row td { background: var(--surface-2); padding: 6px 14px; }
   border-radius: 3px;
   font-size: 12px;
 }
+
+/* === Services panel === */
+.svc-card {
+  margin: 12px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.svc-card > summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.svc-card[open] > summary { border-bottom: 1px solid var(--border-soft); }
+.svc-card > * { padding-left: 12px; padding-right: 12px; }
+.svc-card > h4 { margin: 12px 0 6px; }
+.svc-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 16px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.svc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+.svc-config-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px 16px;
+  margin: 8px 0 12px;
+}
+.svc-config-form label { display: flex; flex-direction: column; gap: 2px; }
+.svc-config-form button { grid-column: 1 / -1; justify-self: start; }
+.svc-raw > summary,
+.svc-backups > summary,
+.svc-journal > summary {
+  cursor: pointer;
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.svc-raw textarea {
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  color: var(--text);
+  padding: 8px;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+.svc-journal-pre {
+  background: var(--surface-2);
+  padding: 8px;
+  border-radius: 4px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
