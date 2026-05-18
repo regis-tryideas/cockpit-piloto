@@ -1,5 +1,13 @@
 import time
 
+# Prefixos de interfaces "barulho" que poluem o painel em hosts PVE:
+# fwbr*/fwln*/fwpr* (bridges de firewall por VM), tap* (tap devices das VMs).
+IGNORED_PREFIXES = ("fw", "tap")
+
+
+def _is_ignored(iface: str) -> bool:
+    return iface.startswith(IGNORED_PREFIXES)
+
 
 def _snapshot() -> dict:
     snapshot = {}
@@ -38,6 +46,8 @@ def collect(interval: int = 1) -> dict:
 
     rows = []
     for iface, cur in b.items():
+        if _is_ignored(iface):
+            continue
         prev = a.get(iface)
         if not prev:
             continue
