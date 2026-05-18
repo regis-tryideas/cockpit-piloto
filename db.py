@@ -637,11 +637,15 @@ def pg_init_schema() -> tuple[bool, str]:
     return True, msg
 
 
+_pg_insert_warned: set[str] = set()
+
+
 def pg_insert_many(table: str, rows: list[dict]):
     """Insere rows na tabela equivalente do Postgres remoto (dual-write).
 
-    Falha silenciosa se PG não estiver habilitado/acessível — local nunca é
-    impactado. Use ON CONFLICT DO NOTHING para idempotência.
+    Falha (com log uma vez por tabela) se PG não estiver acessível ou a
+    tabela ainda não existir lá — local não é tocado pra evitar duplicação,
+    então o aviso é importante pra perceber schema desatualizado.
     """
     if not rows:
         return
@@ -650,9 +654,14 @@ def pg_insert_many(table: str, rows: list[dict]):
     cfg = pg_get_config()
     if not cfg["enabled"]:
         return
+    import logging as _logging
+    _log = _logging.getLogger("cockpit.db.pg")
     try:
         conn, _ = _pg_connect()
-    except Exception:
+    except Exception as e:
+        if table not in _pg_insert_warned:
+            _log.warning("PG connect falhou para insert em %s: %s", table, e)
+            _pg_insert_warned.add(table)
         return
     try:
         full = pg_full_table_name(cfg, table)
@@ -667,8 +676,14 @@ def pg_insert_many(table: str, rows: list[dict]):
                     sql_stmt,
                     [tuple(r.get(c) for c in cols) for r in rows],
                 )
-    except Exception:
-        pass
+        _pg_insert_warned.discard(table)
+    except Exception as e:
+        if table not in _pg_insert_warned:
+            _log.warning(
+                "PG insert falhou em %s: %s. Provavelmente schema desatualizado — "
+                "rode pg_init_schema em /system/pg.", table, e,
+            )
+            _pg_insert_warned.add(table)
     finally:
         try:
             conn.close()
