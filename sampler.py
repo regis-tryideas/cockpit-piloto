@@ -62,26 +62,36 @@ def _sample_once(ts: int):
             "cached_kb": ram.get("cached"),
         }])
 
-    remote = ldisk_col.remote_block_devices()
+    # Discos físicos via disk collector (já filtra remotos internamente)
     disk = _safe(disk_col.collect, interval=1) or {}
     if not disk.get("error"):
         disk_rows = []
-        iscsi_rows = []
         for d in disk.get("devices", []):
-            row = {
+            disk_rows.append({
                 "ts": ts, "device": d["device"],
                 "util": d.get("util"),
                 "r_iops": d.get("r_s"), "w_iops": d.get("w_s"),
                 "r_kbs": d.get("rkB_s"), "w_kbs": d.get("wkB_s"),
                 "r_await": d.get("r_await"), "w_await": d.get("w_await"),
                 "aqu_sz": d.get("aqu_sz"),
-            }
-            if d["device"] in remote:
-                iscsi_rows.append(row)
-            else:
-                disk_rows.append(row)
+            })
         if disk_rows:
             db.insert_many("metrics_disk", disk_rows)
+
+    # iSCSI/FC/FCoE via logical_disk collector (iostat só nos remotos)
+    ldisk = _safe(ldisk_col.collect, interval=1) or {}
+    if not ldisk.get("error"):
+        iscsi_rows = []
+        for d in ldisk.get("devices", []):
+            io = d.get("io") or {}
+            iscsi_rows.append({
+                "ts": ts, "device": d["device"],
+                "util": io.get("util"),
+                "r_iops": io.get("r_s"), "w_iops": io.get("w_s"),
+                "r_kbs": io.get("rkB_s"), "w_kbs": io.get("wkB_s"),
+                "r_await": io.get("r_await"), "w_await": io.get("w_await"),
+                "aqu_sz": io.get("aqu_sz"),
+            })
         if iscsi_rows:
             db.insert_many("metrics_iscsi", iscsi_rows)
 
