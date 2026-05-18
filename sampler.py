@@ -65,20 +65,25 @@ def _sample_once(ts: int):
     remote = ldisk_col.remote_block_devices()
     disk = _safe(disk_col.collect, interval=1) or {}
     if not disk.get("error"):
-        rows = []
+        disk_rows = []
+        iscsi_rows = []
         for d in disk.get("devices", []):
-            if d["device"] in remote:
-                continue
-            rows.append({
+            row = {
                 "ts": ts, "device": d["device"],
                 "util": d.get("util"),
                 "r_iops": d.get("r_s"), "w_iops": d.get("w_s"),
                 "r_kbs": d.get("rkB_s"), "w_kbs": d.get("wkB_s"),
                 "r_await": d.get("r_await"), "w_await": d.get("w_await"),
                 "aqu_sz": d.get("aqu_sz"),
-            })
-        if rows:
-            db.insert_many("metrics_disk", rows)
+            }
+            if d["device"] in remote:
+                iscsi_rows.append(row)
+            else:
+                disk_rows.append(row)
+        if disk_rows:
+            db.insert_many("metrics_disk", disk_rows)
+        if iscsi_rows:
+            db.insert_many("metrics_iscsi", iscsi_rows)
 
     net = _safe(net_col.collect, interval=1) or {}
     if not net.get("error"):

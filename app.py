@@ -1335,6 +1335,7 @@ VALID_HISTORY_RESOURCES = {
     "cpu": "metrics_cpu",
     "mem": "metrics_mem",
     "disk": "metrics_disk",
+    "iscsi": "metrics_iscsi",
     "net": "metrics_net",
     "psi": "metrics_psi",
     "zfs_pool": "metrics_zfs_pool",
@@ -1375,7 +1376,7 @@ def api_history(resource):
         window = request.args.get("window", "6h")
         seconds = WINDOW_PRESETS.get(window, 6 * 3600)
         rows = db.fetch_history(table, seconds)
-    if resource == "disk":
+    if resource in ("disk", "iscsi"):
         for r in rows:
             ri = r.get("r_iops") or 0
             wi = r.get("w_iops") or 0
@@ -1386,6 +1387,16 @@ def api_history(resource):
             r["avg_latency"] = (
                 round((ra * ri + wa * wi) / total, 2) if total > 0 else 0.0
             )
+    if resource == "iscsi":
+        # filtra devices ociosos: precisa ter total_iops > 0 em algum ponto
+        max_iops_by_dev: dict[str, float] = {}
+        for r in rows:
+            dev = r.get("device")
+            v = r.get("total_iops") or 0
+            if v > max_iops_by_dev.get(dev, 0):
+                max_iops_by_dev[dev] = v
+        active = {dev for dev, mx in max_iops_by_dev.items() if mx > 0}
+        rows = [r for r in rows if r.get("device") in active]
 
     if resource == "pve_vm":
         vmid = request.args.get("vmid")

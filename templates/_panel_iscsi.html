@@ -1,5 +1,5 @@
 {% extends "dashboard.html" %}
-{% from "_history.html" import explainer %}
+{% from "_history.html" import history_block, explainer %}
 {% block panel %}
 
 <nav class="breadcrumb">
@@ -85,6 +85,49 @@
     <div class="card-foot">discos /dev/sd* expostos</div>
   </div>
 </section>
+
+{# ---------- Histórico (charts) — só devices com I/O na janela ---------- #}
+{% if data.sessions %}
+{{ history_block(
+  'iscsi-iops-chart',
+  'IOPS por device (read+write)',
+  'iscsi',
+  '[{"label":"IOPS","key":"total_iops","groupBy":"device"}]',
+  y_label='ops/s'
+) }}
+
+{{ history_block(
+  'iscsi-latency-chart',
+  'Response time médio por device (ms)',
+  'iscsi',
+  '[{"label":"avg latency","key":"avg_latency","groupBy":"device"}]',
+  y_label='ms'
+) }}
+
+{{ history_block(
+  'iscsi-util-chart',
+  '%util por device',
+  'iscsi',
+  '[{"label":"util","key":"util","groupBy":"device"}]',
+  y_max=100, y_label='% util'
+) }}
+
+{{ history_block(
+  'iscsi-throughput-r-chart',
+  'Throughput de leitura',
+  'iscsi',
+  '[{"label":"read","key":"r_kbs","groupBy":"device"}]',
+  y_label='B/s', value_format='kbytes_per_sec'
+) }}
+
+{{ history_block(
+  'iscsi-throughput-w-chart',
+  'Throughput de escrita',
+  'iscsi',
+  '[{"label":"write","key":"w_kbs","groupBy":"device"}]',
+  y_label='B/s', value_format='kbytes_per_sec'
+) }}
+{% endif %}
 
 {# ---------- iscsid.conf global ---------- #}
 <section class="panel">

@@ -66,6 +66,16 @@ def init():
             );
             CREATE INDEX IF NOT EXISTS idx_disk_ts ON metrics_disk(ts);
 
+            CREATE TABLE IF NOT EXISTS metrics_iscsi (
+                ts INTEGER NOT NULL,
+                device TEXT NOT NULL,
+                util REAL, r_iops REAL, w_iops REAL,
+                r_kbs REAL, w_kbs REAL,
+                r_await REAL, w_await REAL, aqu_sz REAL,
+                PRIMARY KEY (ts, device)
+            );
+            CREATE INDEX IF NOT EXISTS idx_iscsi_ts ON metrics_iscsi(ts);
+
             CREATE TABLE IF NOT EXISTS metrics_net (
                 ts INTEGER NOT NULL,
                 iface TEXT NOT NULL,
@@ -242,8 +252,8 @@ def recent_failed_attempts(remote_addr: str, window_seconds: int = 300) -> int:
 
 
 HISTORY_TABLES = (
-    "metrics_cpu", "metrics_mem", "metrics_disk", "metrics_net",
-    "metrics_psi", "metrics_zfs_pool", "metrics_zfs_arc",
+    "metrics_cpu", "metrics_mem", "metrics_disk", "metrics_iscsi",
+    "metrics_net", "metrics_psi", "metrics_zfs_pool", "metrics_zfs_arc",
     "metrics_pve_vm", "metrics_procs",
 )
 
@@ -503,6 +513,12 @@ _PG_TABLE_DEFS = {
         "buffers_kb BIGINT, cached_kb BIGINT, PRIMARY KEY (ts)"
     ),
     "metrics_disk": (
+        "ts BIGINT, device TEXT, util DOUBLE PRECISION, r_iops DOUBLE PRECISION, "
+        "w_iops DOUBLE PRECISION, r_kbs DOUBLE PRECISION, w_kbs DOUBLE PRECISION, "
+        "r_await DOUBLE PRECISION, w_await DOUBLE PRECISION, aqu_sz DOUBLE PRECISION, "
+        "PRIMARY KEY (ts, device)"
+    ),
+    "metrics_iscsi": (
         "ts BIGINT, device TEXT, util DOUBLE PRECISION, r_iops DOUBLE PRECISION, "
         "w_iops DOUBLE PRECISION, r_kbs DOUBLE PRECISION, w_kbs DOUBLE PRECISION, "
         "r_await DOUBLE PRECISION, w_await DOUBLE PRECISION, aqu_sz DOUBLE PRECISION, "
