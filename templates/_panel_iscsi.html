@@ -220,6 +220,7 @@
           <td>
             {% if s.devices %}
               {% for d in s.devices %}
+              {% set in_use = d.io and d.io.total_iops and d.io.total_iops > 0 %}
               <div class="iscsi-device-row">
                 <div class="iscsi-device">
                   <span class="mono">{{ d.path }}</span>
@@ -231,6 +232,9 @@
                   {% endif %}
                   {% if d.mountpoint %}
                     <span class="badge ok">→ {{ d.mountpoint }}</span>
+                  {% endif %}
+                  {% if in_use %}
+                    <span class="badge ok" data-tip="I/O ativo na amostra ({{ data.ldisk_interval }}s)">em uso</span>
                   {% endif %}
                 </div>
                 {% if d.mountpoint %}
@@ -272,6 +276,76 @@
                   </details>
                 {% endif %}
               </div>
+              {% if in_use %}
+              <details class="ldisk-inline" open style="margin:6px 0 12px 0">
+                <summary>logical disk · I/O + partições <small>(amostra {{ data.ldisk_interval }}s)</small></summary>
+                <div class="table-wrap" style="margin-top:8px">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th title="IOPS de leitura">Read IOPS</th>
+                        <th>Write IOPS</th>
+                        <th>Total IOPS</th>
+                        <th title="response time médio das leituras (ms)">Read lat</th>
+                        <th>Write lat</th>
+                        <th title="média ponderada por IOPS">Avg lat</th>
+                        <th>Read kB/s</th>
+                        <th>Write kB/s</th>
+                        <th title="profundidade média da fila">aqu-sz</th>
+                        <th>%util</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>{{ "%.0f"|format(d.io.r_s) }}</td>
+                        <td>{{ "%.0f"|format(d.io.w_s) }}</td>
+                        <td><strong>{{ "%.0f"|format(d.io.total_iops) }}</strong></td>
+                        <td class="{% if d.io.r_await >= 20 %}warn-text{% endif %}">{{ "%.2f"|format(d.io.r_await) }} ms</td>
+                        <td class="{% if d.io.w_await >= 20 %}warn-text{% endif %}">{{ "%.2f"|format(d.io.w_await) }} ms</td>
+                        <td><strong class="{% if d.io.avg_latency >= 20 %}warn-text{% endif %}">{{ "%.2f"|format(d.io.avg_latency) }} ms</strong></td>
+                        <td>{{ "%.1f"|format(d.io.rkB_s) }}</td>
+                        <td>{{ "%.1f"|format(d.io.wkB_s) }}</td>
+                        <td>{{ "%.2f"|format(d.io.aqu_sz) }}</td>
+                        <td>
+                          <div class="bar {% if d.io.util >= 90 %}critical{% elif d.io.util >= 70 %}warn{% endif %}">
+                            <span style="width: {{ [d.io.util,100]|min }}%"></span>
+                          </div>
+                          <span class="bar-value">{{ "%.1f"|format(d.io.util) }}%</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                {% if d.partitions %}
+                <div class="table-wrap" style="margin-top:8px">
+                  <table>
+                    <thead>
+                      <tr><th>Partição</th><th>Tipo</th><th>Tamanho</th><th>FS</th><th>Mount</th></tr>
+                    </thead>
+                    <tbody>
+                      {% for p in d.partitions %}
+                      <tr>
+                        <td class="mono"><strong>{{ p.name }}</strong></td>
+                        <td>{{ p.type }}</td>
+                        <td>{{ p.size or '—' }}</td>
+                        <td>{{ p.fstype or '—' }}</td>
+                        <td class="mono">{{ p.mountpoint or '—' }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+                {% endif %}
+                {% if d.vendor or d.model or d.wwn or d.serial %}
+                <p class="hint-inline" style="margin-top:8px">
+                  {% if d.vendor %}<strong>vendor:</strong> {{ d.vendor }} · {% endif %}
+                  {% if d.model %}<strong>model:</strong> {{ d.model }} · {% endif %}
+                  {% if d.wwn %}<strong>wwn:</strong> <span class="mono">{{ d.wwn }}</span> · {% endif %}
+                  {% if d.serial %}<strong>serial:</strong> <span class="mono">{{ d.serial }}</span>{% endif %}
+                </p>
+                {% endif %}
+              </details>
+              {% endif %}
               {% endfor %}
             {% else %}
               <small class="mono">—</small>

@@ -248,20 +248,6 @@ def view_disk():
     )
 
 
-@app.get("/logical-disk")
-@login_required
-def view_logical_disk():
-    interval = _interval()
-    data = ldisk_col.collect(interval=interval)
-    return render_template(
-        "_panel_logical_disk.html",
-        tab="logical-disk",
-        heading="Logical Disk",
-        username=g.session["username"],
-        data=data,
-    )
-
-
 @app.get("/system")
 @login_required
 def view_system():
@@ -432,13 +418,30 @@ def apply_tuning():
 @login_required
 def view_iscsi():
     data = iscsi_col.collect()
-    # Enriquece cada device com info de mount + blkid
+    interval = _interval()
+    # logical_disk traz I/O (iostat), partições e metadados (vendor/model/wwn)
+    # para cada device de transport remoto. Mapeamos por nome do device.
+    ldisk = ldisk_col.collect(interval=interval)
+    ldisk_by_name = {row["device"]: row for row in ldisk.get("devices", [])}
+    data["ldisk_interval"] = ldisk.get("interval", interval)
+    # Enriquece cada device com info de mount + blkid + I/O + partições
     for s in data.get("sessions", []):
         for d in s.get("devices", []):
             path = f"/dev/{d['name']}"
             d["path"] = path
             d["mountpoint"] = mount_col.mountpoint_of(path)
             d["blkid"] = mount_col.blkid(path)
+            ld = ldisk_by_name.get(d["name"])
+            if ld:
+                d["io"] = ld.get("io")
+                d["partitions"] = ld.get("partitions") or []
+                d["vendor"] = ld.get("vendor")
+                d["model"] = ld.get("model")
+                d["wwn"] = ld.get("wwn")
+                d["serial"] = ld.get("serial")
+            else:
+                d["io"] = None
+                d["partitions"] = []
     data["fstab_iscsi"] = [
         l for l in mount_col.fstab_lines()
         if "_netdev" in (l.get("options") or "")

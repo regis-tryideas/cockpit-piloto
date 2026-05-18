@@ -32,7 +32,6 @@
   <nav class="tabs">
     <a class="{% if tab=='dashboard' %}active{% endif %}" href="{{ url_for('view_dashboard') }}">Dashboard</a>
     <a class="{% if tab=='disk' %}active{% endif %}" href="{{ url_for('view_disk') }}">Disco</a>
-    <a class="{% if tab=='logical-disk' %}active{% endif %}" href="{{ url_for('view_logical_disk') }}">Logical Disk</a>
     <a class="{% if tab=='zfs' %}active{% endif %}" href="{{ url_for('view_zfs') }}">ZFS</a>
     {% if pve_detected %}
     <a class="{% if tab=='proxmox' %}active{% endif %}" href="{{ url_for('view_proxmox') }}">Proxmox</a>
