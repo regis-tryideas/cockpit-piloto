@@ -271,6 +271,56 @@
 </section>
 {% endif %}
 
+{# ---------- iSCSI · scheduler udev rule ---------- #}
+{% if data.iscsi_udev_rule %}
+<section class="panel" id="iscsi-udev">
+  <h3>iSCSI · Scheduler I/O <small>regra udev por LUN</small></h3>
+  <p class="hint-inline">
+    Define <code>scheduler=none</code> e <code>nr_requests=1024</code> para
+    todo bloco <code>sd*</code> cujo <code>ID_PATH</code> contém
+    <code>iscsi</code>. Aplica em discos iSCSI já presentes e nos que
+    aparecerem depois (hot-plug).
+    <br><strong>Por quê:</strong>
+    <em>scheduler=none</em> evita reordenar IO no host quando o storage
+    backend já faz isso (controller cuida da fila); <em>nr_requests=1024</em>
+    amplia a fila do block layer pra acomodar o paralelismo do iSCSI
+    (cmds_max + queue_depth do iscsid).
+  </p>
+  <div class="kv-grid">
+    <div>
+      <div class="kv-label">Arquivo</div>
+      <div class="kv-value mono">{{ data.iscsi_udev_rule.path }}</div>
+    </div>
+    <div>
+      <div class="kv-label">Status</div>
+      <div class="kv-value">
+        {% if data.iscsi_udev_rule.compliant %}
+          <span class="badge ok">conforme</span>
+        {% elif data.iscsi_udev_rule.exists %}
+          <span class="badge warn-bg">diverge do recomendado</span>
+        {% else %}
+          <span class="badge">não existe</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% if not data.iscsi_udev_rule.compliant %}
+  <form method="post" action="{{ url_for('iscsi_apply_udev_scheduler') }}"
+        style="margin:10px 0"
+        onsubmit="return confirm('Escrever {{ data.iscsi_udev_rule.path }} + udevadm reload + trigger?\n\nReaplicia scheduler e nr_requests nos LUNs iSCSI imediatamente.');">
+    <button type="submit" class="btn-small">✓ Aplicar regra udev</button>
+  </form>
+  {% endif %}
+  <details {% if not data.iscsi_udev_rule.compliant %}open{% endif %}>
+    <summary>Comparar conteúdo</summary>
+    <h4>Atual</h4>
+    <pre class="mono svc-journal-pre">{{ data.iscsi_udev_rule.actual or '(arquivo não existe)' }}</pre>
+    <h4>Recomendado</h4>
+    <pre class="mono svc-journal-pre">{{ data.iscsi_udev_rule.expected }}</pre>
+  </details>
+</section>
+{% endif %}
+
 {# ---------- Histórico ---------- #}
 {{ history_block(
   'procs-chart',

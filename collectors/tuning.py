@@ -101,7 +101,7 @@ def _arc_max_b() -> int | None:
 
 def collect(total_ram_b: int = 0, cores: int = 0,
             pve_vms: int = 0, has_zfs: bool = False,
-            numa_nodes: int = 1) -> dict:
+            numa_nodes: int = 1, has_iscsi: bool = False) -> dict:
     """Devolve recomendações pra este host. Os contadores vêm dos outros
     coletores (memória, cpu, proxmox, zfs, numa) e moldam as heurísticas."""
     total_ram_gb = total_ram_b / 1024**3 if total_ram_b else 0
@@ -185,6 +185,66 @@ def collect(total_ram_b: int = 0, cores: int = 0,
             "Fila de pacotes recebidos antes do softirq processar. Em "
             "hosts PVE com vmbr0+ várias VMs trafegando, aumentar evita "
             "drops em picos.")
+
+    # ---- TCP buffers para redes 10G+ (iSCSI, replicação, backup) ----
+    if has_iscsi:
+        def _norm_ws(s):
+            return " ".join((s or "").split())
+
+        target_rmem = 134217728
+        rmem = _int(_read_sysctl("net.core.rmem_max"))
+        if rmem is not None:
+            sev = "warn" if rmem < target_rmem else "info"
+            add("net.core.rmem_max", rmem, target_rmem, sev,
+                "Buffer máximo de socket de recebimento. Default ~200 KiB é "
+                "insuficiente pra TCP saturar 10G+ (iSCSI). 128 MiB destrava "
+                "o auto-tuning de janela em links rápidos.")
+
+        target_wmem = 134217728
+        wmem = _int(_read_sysctl("net.core.wmem_max"))
+        if wmem is not None:
+            sev = "warn" if wmem < target_wmem else "info"
+            add("net.core.wmem_max", wmem, target_wmem, sev,
+                "Idem para envio. Limita o que tcp_wmem consegue alcançar.")
+
+        target_tcp_rmem = "4096 87380 134217728"
+        cur_tcp_rmem = _norm_ws(_read_sysctl("net.ipv4.tcp_rmem"))
+        if cur_tcp_rmem:
+            sev = "warn" if cur_tcp_rmem != target_tcp_rmem else "info"
+            add("net.ipv4.tcp_rmem", cur_tcp_rmem, target_tcp_rmem, sev,
+                "Tupla min/default/max do auto-tuning de buffer recv por socket. "
+                "O 'max' (último valor) precisa bater com net.core.rmem_max — "
+                "senão o auto-tune não cresce além do default.")
+
+        target_tcp_wmem = "4096 65536 134217728"
+        cur_tcp_wmem = _norm_ws(_read_sysctl("net.ipv4.tcp_wmem"))
+        if cur_tcp_wmem:
+            sev = "warn" if cur_tcp_wmem != target_tcp_wmem else "info"
+            add("net.ipv4.tcp_wmem", cur_tcp_wmem, target_tcp_wmem, sev,
+                "Mesma lógica do tcp_rmem, lado envio.")
+
+        ws = _int(_read_sysctl("net.ipv4.tcp_window_scaling"))
+        if ws is not None:
+            sev = "warn" if ws == 0 else "info"
+            add("net.ipv4.tcp_window_scaling", ws, 1, sev,
+                "TCP Window Scaling (RFC 1323). Sem isso, janela trava em "
+                "64 KiB e throughput em links de alta latência fica preso. "
+                "Default é 1 — só vale verificar.")
+
+        ts = _int(_read_sysctl("net.ipv4.tcp_timestamps"))
+        if ts is not None:
+            sev = "warn" if ts == 0 else "info"
+            add("net.ipv4.tcp_timestamps", ts, 1, sev,
+                "Timestamps TCP melhoram estimativa de RTT e proteção PAWS "
+                "(retransmissões em janelas reaproveitadas). Default 1.")
+
+        ll = _int(_read_sysctl("net.ipv4.tcp_low_latency"))
+        if ll is not None:
+            sev = "info"  # em kernels modernos é no-op
+            add("net.ipv4.tcp_low_latency", ll, 1, sev,
+                "Em kernels antigos prefere latência baixa a throughput; "
+                "em kernels modernos (>= 4.5) é no-op, mantido aqui por "
+                "compatibilidade com guias de tuning.")
 
     # ---- vm.min_free_kbytes ----
     mfk = _int(_read_sysctl("vm.min_free_kbytes"))

@@ -280,10 +280,14 @@ def view_system():
     numa_nodes = numa_info.get("node_count", 1) if not numa_info.get("error") else 1
     zfs_avail = zfs_col.available().get("ok", False)
 
+    has_iscsi = os.path.exists("/sys/class/iscsi_session")
     data["tuning"] = tuning_col.collect(
         total_ram_b=total_ram_b, cores=cores, pve_vms=pve_vms,
-        has_zfs=zfs_avail, numa_nodes=numa_nodes,
+        has_zfs=zfs_avail, numa_nodes=numa_nodes, has_iscsi=has_iscsi,
     )
+
+    data["iscsi_udev_rule"] = (iscsi_col.udev_scheduler_rule_state()
+                               if has_iscsi else None)
 
     data["services"] = services_col.collect()
 
@@ -458,6 +462,17 @@ def view_iscsi():
     )
 
 
+def _apply_iscsi_profile_response(profile_name, r, target, portal):
+    if r["all_ok"]:
+        flash(("ok", f"Perfil '{profile_name}' aplicado em {target} ({portal}). "
+                     "Faça logout/login para sessões ativas pegarem os novos parâmetros."))
+    else:
+        errs = [x for x in r["results"] if not x["ok"]]
+        flash(("error", f"Falhas em {len(errs)} parâmetros: " +
+                       "; ".join(f"{e['key']}={e['message']}" for e in errs[:3])))
+    return redirect(url_for("view_iscsi"))
+
+
 @app.post("/iscsi/apply-pve-profile")
 @login_required
 def iscsi_apply_profile():
@@ -467,14 +482,31 @@ def iscsi_apply_profile():
         flash(("error", "target e portal são obrigatórios"))
         return redirect(url_for("view_iscsi"))
     r = iscsi_col.apply_pve_profile(target, portal)
-    if r["all_ok"]:
-        flash(("ok", f"Perfil PVE aplicado em {target} ({portal}). "
-                     "Faça logout/login para sessões ativas pegarem os novos timeouts."))
-    else:
-        errs = [x for x in r["results"] if not x["ok"]]
-        flash(("error", f"Falhas em {len(errs)} parâmetros: " +
-                       "; ".join(f"{e['key']}={e['message']}" for e in errs[:3])))
-    return redirect(url_for("view_iscsi"))
+    return _apply_iscsi_profile_response("PVE completo", r, target, portal)
+
+
+@app.post("/iscsi/apply-pve-timeouts")
+@login_required
+def iscsi_apply_timeouts_profile():
+    target = request.form.get("target", "").strip()
+    portal = request.form.get("portal", "").strip()
+    if not target or not portal:
+        flash(("error", "target e portal são obrigatórios"))
+        return redirect(url_for("view_iscsi"))
+    r = iscsi_col.apply_pve_timeouts_profile(target, portal)
+    return _apply_iscsi_profile_response("PVE timeouts", r, target, portal)
+
+
+@app.post("/iscsi/apply-pve-performance")
+@login_required
+def iscsi_apply_performance_profile():
+    target = request.form.get("target", "").strip()
+    portal = request.form.get("portal", "").strip()
+    if not target or not portal:
+        flash(("error", "target e portal são obrigatórios"))
+        return redirect(url_for("view_iscsi"))
+    r = iscsi_col.apply_pve_performance_profile(target, portal)
+    return _apply_iscsi_profile_response("PVE performance", r, target, portal)
 
 
 @app.post("/iscsi/logout")
@@ -496,6 +528,30 @@ def iscsi_apply_global_pve():
     ok, msg = iscsi_col.apply_pve_profile_global()
     flash(("ok" if ok else "error", msg))
     return redirect(url_for("view_iscsi"))
+
+
+@app.post("/iscsi/apply-global-timeouts")
+@login_required
+def iscsi_apply_global_timeouts():
+    ok, msg = iscsi_col.apply_pve_timeouts_profile_global()
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_iscsi"))
+
+
+@app.post("/iscsi/apply-global-performance")
+@login_required
+def iscsi_apply_global_performance():
+    ok, msg = iscsi_col.apply_pve_performance_profile_global()
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_iscsi"))
+
+
+@app.post("/system/iscsi-udev/apply")
+@login_required
+def iscsi_apply_udev_scheduler():
+    ok, msg = iscsi_col.apply_udev_scheduler_rule()
+    flash(("ok" if ok else "error", msg))
+    return redirect(url_for("view_system") + "#iscsi-udev")
 
 
 @app.post("/iscsi/discover")

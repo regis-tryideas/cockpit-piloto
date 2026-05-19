@@ -15,9 +15,21 @@ from pathlib import Path
 ISCSID_CONF = Path("/etc/iscsi/iscsid.conf")
 ISCSI_NODES_DIR = Path("/etc/iscsi/nodes")
 
-# Perfil recomendado para hosts PVE com VMs em iSCSI.
-# Aplicado em cada node (target+portal) via 'iscsiadm -m node -o update'.
-PVE_RECOMMENDED = {
+UDEV_SCHEDULER_RULE = Path("/etc/udev/rules.d/60-iscsi-scheduler.rules")
+UDEV_SCHEDULER_RULE_CONTENT = (
+    "# Gerado por cockpit-piloto · scheduler 'none' + nr_requests 1024\n"
+    "# para LUNs iSCSI (ID_PATH inclui 'iscsi').\n"
+    'ACTION=="add|change", KERNEL=="sd*", SUBSYSTEM=="block", \\\n'
+    '  ENV{ID_PATH}=="*iscsi*", \\\n'
+    '  ATTR{queue/scheduler}="none", \\\n'
+    '  ATTR{queue/nr_requests}="1024"\n'
+)
+
+# --- Perfis aplicáveis em cada node (target+portal) via iscsiadm -o update ---
+
+# Recovery: reduz replacement_timeout default (120s → 15s) + noop-out agressivo
+# para detectar path morto rápido em vez de travar VMs em D-state.
+PVE_TIMEOUTS_RECOMMENDED = {
     "node.session.timeo.replacement_timeout": "15",
     "node.conn[0].timeo.noop_out_interval": "5",
     "node.conn[0].timeo.noop_out_timeout": "5",
@@ -26,10 +38,27 @@ PVE_RECOMMENDED = {
     "node.session.err_timeo.tgt_reset_timeout": "30",
 }
 
+# Performance: paralelismo SCSI, bursts grandes e digests off (redes 10G+
+# confiáveis). Default da MaxOutstandingR2T é 1 — sozinho já limita a vazão
+# de escrita.
+PVE_PERFORMANCE_RECOMMENDED = {
+    "node.session.iscsi.MaxOutstandingR2T": "32",
+    "node.session.cmds_max": "1024",
+    "node.session.queue_depth": "128",
+    "node.session.iscsi.InitialR2T": "No",
+    "node.session.iscsi.FirstBurstLength": "262144",
+    "node.session.iscsi.MaxBurstLength": "16776192",
+    "node.conn[0].iscsi.MaxRecvDataSegmentLength": "262144",
+    "node.conn[0].iscsi.HeaderDigest": "None",
+    "node.conn[0].iscsi.DataDigest": "None",
+}
+
+# Alias legado: união dos dois (mantém compatibilidade com chamadas antigas).
+PVE_RECOMMENDED = {**PVE_TIMEOUTS_RECOMMENDED, **PVE_PERFORMANCE_RECOMMENDED}
+
 # Parâmetros que vamos coletar pra exibir (subconjunto relevante)
 INSPECTED_KEYS = list(PVE_RECOMMENDED.keys()) + [
     "node.startup",
-    "node.session.queue_depth",
     "node.conn[0].timeo.login_timeout",
     "node.conn[0].timeo.logout_timeout",
 ]
@@ -140,10 +169,14 @@ def session_state(sid: int) -> dict:
     return out
 
 
-def evaluate_compliance(params: dict) -> dict:
-    """Compara params atuais vs PVE_RECOMMENDED. Retorna {ok_count, mismatches}."""
+def evaluate_compliance(params: dict, profile: dict | None = None) -> dict:
+    """Compara params atuais vs profile (default = perfil completo).
+
+    Retorna {ok_count, total, mismatches, compliant}.
+    """
+    profile = profile if profile is not None else PVE_RECOMMENDED
     mismatches = []
-    for k, expected in PVE_RECOMMENDED.items():
+    for k, expected in profile.items():
         actual = params.get(k)
         if actual is None:
             continue  # param não retornado — driver mais novo/antigo
@@ -152,8 +185,8 @@ def evaluate_compliance(params: dict) -> dict:
                 "key": k, "actual": actual, "expected": expected,
             })
     return {
-        "ok_count": len(PVE_RECOMMENDED) - len(mismatches),
-        "total": len(PVE_RECOMMENDED),
+        "ok_count": len(profile) - len(mismatches),
+        "total": len(profile),
         "mismatches": mismatches,
         "compliant": len(mismatches) == 0,
     }
@@ -172,18 +205,31 @@ def set_param(target: str, portal: str, key: str, value: str) -> tuple[bool, str
     return True, f"{key} = {value}"
 
 
-def apply_pve_profile(target: str, portal: str) -> dict:
-    """Aplica todos os parâmetros do PVE_RECOMMENDED em um node."""
+def apply_profile(target: str, portal: str, profile: dict) -> dict:
+    """Aplica um dict de parâmetros num node específico."""
     results = []
-    for k, v in PVE_RECOMMENDED.items():
+    for k, v in profile.items():
         ok, msg = set_param(target, portal, k, v)
         results.append({"key": k, "value": v, "ok": ok, "message": msg})
     return {
         "all_ok": all(r["ok"] for r in results),
         "results": results,
         "note": ("Para sessões já ativas, faça logout/login para que os novos "
-                 "timeouts entrem em vigor."),
+                 "parâmetros entrem em vigor."),
     }
+
+
+def apply_pve_profile(target: str, portal: str) -> dict:
+    """Aplica o perfil completo (timeouts + performance)."""
+    return apply_profile(target, portal, PVE_RECOMMENDED)
+
+
+def apply_pve_timeouts_profile(target: str, portal: str) -> dict:
+    return apply_profile(target, portal, PVE_TIMEOUTS_RECOMMENDED)
+
+
+def apply_pve_performance_profile(target: str, portal: str) -> dict:
+    return apply_profile(target, portal, PVE_PERFORMANCE_RECOMMENDED)
 
 
 def logout(target: str, portal: str) -> tuple[bool, str]:
@@ -278,9 +324,62 @@ def update_iscsid_conf(updates: dict) -> tuple[bool, str]:
         return False, f"escrita falhou: {e}"
 
 
+def udev_scheduler_rule_state() -> dict:
+    """Estado da regra udev /etc/udev/rules.d/60-iscsi-scheduler.rules."""
+    exists = UDEV_SCHEDULER_RULE.exists()
+    actual = ""
+    if exists:
+        try:
+            actual = UDEV_SCHEDULER_RULE.read_text()
+        except OSError as e:
+            return {
+                "path": str(UDEV_SCHEDULER_RULE),
+                "exists": True,
+                "actual": "",
+                "expected": UDEV_SCHEDULER_RULE_CONTENT,
+                "compliant": False,
+                "error": str(e),
+            }
+    return {
+        "path": str(UDEV_SCHEDULER_RULE),
+        "exists": exists,
+        "actual": actual,
+        "expected": UDEV_SCHEDULER_RULE_CONTENT,
+        "compliant": exists and actual.strip() == UDEV_SCHEDULER_RULE_CONTENT.strip(),
+    }
+
+
+def apply_udev_scheduler_rule() -> tuple[bool, str]:
+    """Escreve a rule + reload udev + trigger."""
+    try:
+        UDEV_SCHEDULER_RULE.parent.mkdir(parents=True, exist_ok=True)
+        UDEV_SCHEDULER_RULE.write_text(UDEV_SCHEDULER_RULE_CONTENT)
+        UDEV_SCHEDULER_RULE.chmod(0o644)
+    except OSError as e:
+        return False, f"escrita falhou: {e}"
+    rc1, _, err1 = _run(["udevadm", "control", "--reload"], timeout=10)
+    if rc1 != 0:
+        return False, f"udevadm reload falhou: {err1 or rc1}"
+    rc2, _, err2 = _run([
+        "udevadm", "trigger", "--subsystem-match=block", "--action=change",
+    ], timeout=20)
+    if rc2 != 0:
+        return False, f"udevadm trigger falhou: {err2 or rc2}"
+    return True, (f"{UDEV_SCHEDULER_RULE} aplicada · "
+                  "scheduler e nr_requests reaplicados aos LUNs iSCSI")
+
+
 def apply_pve_profile_global() -> tuple[bool, str]:
-    """Aplica PVE_RECOMMENDED no /etc/iscsi/iscsid.conf global."""
+    """Aplica perfil completo (timeouts + performance) no /etc/iscsi/iscsid.conf."""
     return update_iscsid_conf(PVE_RECOMMENDED)
+
+
+def apply_pve_timeouts_profile_global() -> tuple[bool, str]:
+    return update_iscsid_conf(PVE_TIMEOUTS_RECOMMENDED)
+
+
+def apply_pve_performance_profile_global() -> tuple[bool, str]:
+    return update_iscsid_conf(PVE_PERFORMANCE_RECOMMENDED)
 
 
 def session_devices(sid: int) -> list[dict]:
@@ -416,12 +515,15 @@ def collect() -> dict:
     node_list = []
     for n in nodes():
         params = node_params(n["target"], n["portal"])
-        compliance = evaluate_compliance(params)
         node_list.append({
             **n,
             "logged_in": (n["target"], n["portal"]) in sess_set,
             "params": params,
-            "compliance": compliance,
+            "compliance": evaluate_compliance(params),
+            "compliance_timeouts": evaluate_compliance(
+                params, PVE_TIMEOUTS_RECOMMENDED),
+            "compliance_performance": evaluate_compliance(
+                params, PVE_PERFORMANCE_RECOMMENDED),
         })
 
     # Enriquece sessões com estado do sysfs, devices e stats
@@ -434,9 +536,15 @@ def collect() -> dict:
         s["connection_port"] = st.get("connection_port")
         s["devices"] = session_devices(s["sid"])
 
-    # Config global iscsid.conf — checa conformidade contra PVE_RECOMMENDED
+    # Config global iscsid.conf — checa conformidade contra os 2 perfis
     conf = iscsid_conf()
-    conf_compliance = evaluate_compliance(conf.get("params", {})) if conf.get("exists") else None
+    params_conf = conf.get("params", {}) if conf.get("exists") else {}
+    conf_compliance = (evaluate_compliance(params_conf)
+                       if conf.get("exists") else None)
+    conf_compliance_timeouts = (evaluate_compliance(
+        params_conf, PVE_TIMEOUTS_RECOMMENDED) if conf.get("exists") else None)
+    conf_compliance_performance = (evaluate_compliance(
+        params_conf, PVE_PERFORMANCE_RECOMMENDED) if conf.get("exists") else None)
 
     # Erros recentes no journal
     errors = journal_errors(lines=30, since="1h")
@@ -447,6 +555,10 @@ def collect() -> dict:
         "nodes": node_list,
         "iscsid_conf": conf,
         "iscsid_conf_compliance": conf_compliance,
+        "iscsid_conf_compliance_timeouts": conf_compliance_timeouts,
+        "iscsid_conf_compliance_performance": conf_compliance_performance,
         "pve_recommended": PVE_RECOMMENDED,
+        "pve_timeouts_recommended": PVE_TIMEOUTS_RECOMMENDED,
+        "pve_performance_recommended": PVE_PERFORMANCE_RECOMMENDED,
         "errors_recent": errors,
     }

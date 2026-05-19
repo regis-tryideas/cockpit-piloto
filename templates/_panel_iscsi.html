@@ -142,57 +142,71 @@
     card do target abaixo).
   </p>
 
-  {% if data.iscsid_conf_compliance and not data.iscsid_conf_compliance.compliant %}
-  <div class="alert" style="background:rgba(210,153,34,0.08); border-color:#9e6a03; margin-bottom:12px">
-    <strong>{{ data.iscsid_conf_compliance.mismatches|length }} parâmetro(s)
-    divergem do perfil PVE recomendado:</strong>
-    <ul style="margin:8px 0 0 20px">
-      {% for m in data.iscsid_conf_compliance.mismatches %}
-      <li><span class="mono">{{ m.key }}</span> = <span class="mono">{{ m.actual }}</span>
-          → recomendado <span class="mono">{{ m.expected }}</span></li>
-      {% endfor %}
-    </ul>
-    <form method="post" action="{{ url_for('iscsi_apply_global_pve') }}"
-          style="margin-top:10px"
-          onsubmit="return confirm('Aplicar perfil PVE no /etc/iscsi/iscsid.conf?\n\nAtualiza valores recomendados, faz backup automático, mas só vale para NOVAS sessões.');">
-      <button type="submit" class="btn-small">✓ Aplicar perfil PVE no iscsid.conf</button>
-    </form>
-  </div>
-  {% else %}
-  <div class="flash flash-ok" style="margin-bottom:12px">
-    Defaults globais estão em conformidade com o perfil PVE.
-  </div>
-  {% endif %}
+  {% set descriptions = {
+    'node.session.timeo.replacement_timeout': 'Tempo (s) que o kernel mantém IO em fila esperando reconexão antes de marcar sessão como morta. Default 120 — fonte do D-state em PVE.',
+    'node.conn[0].timeo.noop_out_interval': 'Intervalo (s) entre pings NOP-Out (keep-alive iSCSI).',
+    'node.conn[0].timeo.noop_out_timeout': 'Timeout (s) para o NOP-In de resposta. Sem resposta = path morto.',
+    'node.session.err_timeo.abort_timeout': 'Tempo (s) para abort de um comando SCSI.',
+    'node.session.err_timeo.lu_reset_timeout': 'Tempo (s) para reset de LUN.',
+    'node.session.err_timeo.tgt_reset_timeout': 'Tempo (s) para reset de target inteiro.',
+    'node.startup': 'manual = não conecta automático no boot; automatic = sim.',
+    'node.session.iscsi.MaxOutstandingR2T': 'Quantos pedidos R2T (Ready-To-Transfer) o initiator pode ter pendentes ao mesmo tempo. Default 1 limita drasticamente o paralelismo de escrita; 32 multiplica a vazão.',
+    'node.session.cmds_max': 'Tamanho da fila SCSI por sessão. Mais alto permite mais comandos em voo simultaneamente — importante pra storage de alta IOPS.',
+    'node.session.queue_depth': 'Profundidade da fila por LUN. 128 é equilibrado pra NVMe-backed via iSCSI.',
+    'node.session.iscsi.InitialR2T': 'No = initiator envia dados imediatamente sem esperar permissão (R2T) do target. Reduz latência de escrita.',
+    'node.session.iscsi.FirstBurstLength': 'Tamanho do primeiro burst antes do primeiro R2T (com InitialR2T=No, faz escritas pequenas terminarem num só round-trip). 262144 = 256 KiB.',
+    'node.session.iscsi.MaxBurstLength': 'Tamanho máximo de cada burst subsequente. 16776192 ≈ 16 MiB — reduz overhead de R2Ts em escritas grandes.',
+    'node.conn[0].iscsi.MaxRecvDataSegmentLength': 'PDU máximo recebido. Maior = menos overhead TCP, importante em 10G+. 262144 = 256 KiB.',
+    'node.conn[0].iscsi.HeaderDigest': 'None = desliga CRC32 do header iSCSI. TCP já faz checksum; em redes confiáveis (datacenter), economia de CPU sem perda.',
+    'node.conn[0].iscsi.DataDigest': 'None = desliga CRC32 do payload. Mesma lógica do HeaderDigest — TCP cobre.',
+  } %}
 
-  <details>
-    <summary>Ver parâmetros relevantes do iscsid.conf</summary>
-    <div class="table-wrap" style="margin-top:8px">
-      <table>
-        <thead><tr><th>Chave</th><th>Atual</th><th>Recomendado</th><th>Significado</th></tr></thead>
-        <tbody>
-          {% set descriptions = {
-            'node.session.timeo.replacement_timeout': 'Tempo (s) que o kernel mantém IO em fila esperando reconexão antes de marcar sessão como morta. Default 120 — fonte do D-state em PVE.',
-            'node.conn[0].timeo.noop_out_interval': 'Intervalo (s) entre pings NOP-Out (keep-alive iSCSI).',
-            'node.conn[0].timeo.noop_out_timeout': 'Timeout (s) para o NOP-In de resposta. Sem resposta = path morto.',
-            'node.session.err_timeo.abort_timeout': 'Tempo (s) para abort de um comando SCSI.',
-            'node.session.err_timeo.lu_reset_timeout': 'Tempo (s) para reset de LUN.',
-            'node.session.err_timeo.tgt_reset_timeout': 'Tempo (s) para reset de target inteiro.',
-            'node.startup': 'manual = não conecta automático no boot; automatic = sim.',
-            'node.session.queue_depth': 'Tamanho da fila SCSI por sessão (default 32-128).',
-          } %}
-          {% for k, rec in data.pve_recommended.items() %}
-          {% set actual = data.iscsid_conf.params.get(k) %}
-          <tr class="{% if actual and actual != rec %}tuning-warn{% elif actual == rec %}tuning-ok{% endif %}">
-            <td class="mono">{{ k }}</td>
-            <td class="mono">{{ actual or '(não definido)' }}</td>
-            <td class="mono">{{ rec }}</td>
-            <td>{{ descriptions.get(k, '') }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  {% for prof_label, prof_key, prof_dict, prof_compliance, apply_route in [
+    ('Timeouts (recovery)', 'timeouts', data.pve_timeouts_recommended,
+     data.iscsid_conf_compliance_timeouts, 'iscsi_apply_global_timeouts'),
+    ('Performance (R2T/queue/digests)', 'performance', data.pve_performance_recommended,
+     data.iscsid_conf_compliance_performance, 'iscsi_apply_global_performance'),
+  ] %}
+  <div class="profile-block" style="margin-bottom:14px">
+    {% if prof_compliance and not prof_compliance.compliant %}
+    <div class="alert" style="background:rgba(210,153,34,0.08); border-color:#9e6a03">
+      <strong>Perfil "{{ prof_label }}":</strong>
+      {{ prof_compliance.mismatches|length }} de {{ prof_compliance.total }}
+      parâmetros fora do recomendado.
+      <form method="post" action="{{ url_for(apply_route) }}"
+            style="margin-top:8px; display:inline"
+            onsubmit="return confirm('Aplicar perfil {{ prof_label }} no /etc/iscsi/iscsid.conf?\n\nBackup automático será criado. Só vale para NOVAS sessões.');">
+        <button type="submit" class="btn-small">✓ Aplicar "{{ prof_label }}" no iscsid.conf</button>
+      </form>
     </div>
-  </details>
+    {% elif prof_compliance %}
+    <div class="flash flash-ok">
+      Perfil "{{ prof_label }}": {{ prof_compliance.ok_count }}/{{ prof_compliance.total }}
+      em conformidade.
+    </div>
+    {% endif %}
+    <details {% if prof_compliance and not prof_compliance.compliant %}open{% endif %}
+             style="margin-top:6px">
+      <summary>Parâmetros do perfil "{{ prof_label }}"</summary>
+      <div class="table-wrap" style="margin-top:8px">
+        <table>
+          <thead><tr><th>Chave</th><th>Atual</th><th>Recomendado</th><th>Significado</th></tr></thead>
+          <tbody>
+            {% for k, rec in prof_dict.items() %}
+            {% set actual = data.iscsid_conf.params.get(k) %}
+            <tr class="{% if actual and actual != rec %}tuning-warn{% elif actual == rec %}tuning-ok{% endif %}">
+              <td class="mono">{{ k }}</td>
+              <td class="mono">{{ actual or '(não definido)' }}</td>
+              <td class="mono">{{ rec }}</td>
+              <td>{{ descriptions.get(k, '') }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+  {% endfor %}
   {% else %}
   <p class="hint-inline">
     Arquivo <code>{{ data.iscsid_conf.path if data.iscsid_conf.path else '/etc/iscsi/iscsid.conf' }}</code>
@@ -433,20 +447,34 @@
         {% else %}
           <span class="badge">offline</span>
         {% endif %}
-        {% if n.compliance.compliant %}
-          <span class="badge ok">PVE-OK</span>
+        {% if n.compliance_timeouts.compliant %}
+          <span class="badge ok">timeouts OK</span>
         {% else %}
-          <span class="badge warn-bg">{{ n.compliance.mismatches|length }} divergente(s)</span>
+          <span class="badge warn-bg">timeouts: {{ n.compliance_timeouts.mismatches|length }} div</span>
+        {% endif %}
+        {% if n.compliance_performance.compliant %}
+          <span class="badge ok">perf OK</span>
+        {% else %}
+          <span class="badge warn-bg">perf: {{ n.compliance_performance.mismatches|length }} div</span>
         {% endif %}
       </div>
       <div>
-        {% if not n.compliance.compliant %}
-        <form method="post" action="{{ url_for('iscsi_apply_profile') }}"
+        {% if not n.compliance_timeouts.compliant %}
+        <form method="post" action="{{ url_for('iscsi_apply_timeouts_profile') }}"
               style="display:inline"
-              onsubmit="return confirm('Aplicar perfil PVE neste target?\n\nReduz replacement_timeout para 15s. Para vigorar nas sessões já ativas, faça logout e login depois.');">
+              onsubmit="return confirm('Aplicar perfil TIMEOUTS neste target?\n\nReduz replacement_timeout para 15s e demais timeouts. Para vigorar nas sessões já ativas, faça logout e login depois.');">
           <input type="hidden" name="target" value="{{ n.target }}">
           <input type="hidden" name="portal" value="{{ n.portal }}">
-          <button type="submit" class="btn-small">✓ Aplicar perfil PVE</button>
+          <button type="submit" class="btn-small">✓ Aplicar timeouts</button>
+        </form>
+        {% endif %}
+        {% if not n.compliance_performance.compliant %}
+        <form method="post" action="{{ url_for('iscsi_apply_performance_profile') }}"
+              style="display:inline"
+              onsubmit="return confirm('Aplicar perfil PERFORMANCE neste target?\n\nAjusta MaxOutstandingR2T, queue_depth, bursts e desliga digests. Logout/login para sessões ativas pegarem.');">
+          <input type="hidden" name="target" value="{{ n.target }}">
+          <input type="hidden" name="portal" value="{{ n.portal }}">
+          <button type="submit" class="btn-small">✓ Aplicar performance</button>
         </form>
         {% endif %}
         {% if n.logged_in %}
